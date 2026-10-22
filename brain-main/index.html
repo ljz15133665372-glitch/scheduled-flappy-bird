@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>定时起跳 Flappy Bird 实验版</title>
+<style>
+  :root { color-scheme: dark; --bg:#0b1220; --panel:#121d30; --line:#2a3a53; --text:#edf4ff; --muted:#a8b7ce; --accent:#73e0c1; --warn:#ffb86b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:radial-gradient(ellipse at top,#172946 0,#0b1220 60%); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 36px; }
+  h1 { margin:0 0 6px; font-size:clamp(24px,4vw,36px); }
+  .intro { margin:0 0 20px; color:var(--muted); }
+  .layout { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(260px,1fr); gap:16px; align-items:start; }
+  .panel { background:rgba(18,29,48,.94); border:1px solid var(--line); border-radius:16px; padding:16px; box-shadow:0 12px 30px #0002; }
+  canvas { display:block; width:100%; height:auto; border-radius:12px; background:#a8ddf5; border:1px solid #3c5975; }
+  .statusbar { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  .stat { background:#0b1424; border:1px solid var(--line); padding:8px 12px; border-radius:10px; min-width:100px; }
+  .stat span { display:block; color:var(--muted); font-size:12px; }
+  .stat strong { font-size:20px; }
+  label { display:block; font-weight:650; margin:12px 0 6px; }
+  input, textarea { width:100%; border:1px solid #3b4c66; background:#0a1322; color:var(--text); border-radius:9px; padding:10px 11px; font:inherit; }
+  textarea { min-height:90px; resize:vertical; }
+  .hint { color:var(--muted); font-size:13px; margin:5px 0 0; }
+  .buttons { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  button { border:0; border-radius:10px; padding:10px 14px; font:inherit; font-weight:750; cursor:pointer; }
+  button.primary { background:var(--accent); color:#08211b; }
+  button.secondary { background:#263751; color:var(--text); border:1px solid #40536e; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .message { margin-top:12px; min-height:48px; border-radius:10px; padding:10px 12px; background:#0b1424; color:var(--muted); border:1px solid var(--line); }
+  .message strong { color:var(--text); }
+  .rules { margin:8px 0 0; padding-left:20px; color:var(--muted); }
+  .rules li { margin:6px 0; }
+  .tag { display:inline-block; border-radius:999px; padding:3px 8px; background:#203b47; color:#a5f4dd; font-size:12px; font-weight:700; }
+  @media (max-width:780px) { .layout { grid-template-columns:1fr; } main { padding:16px 10px 24px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>定时起跳 · Flappy Bird 实验版</h1>
+  <p class="intro">预先设置游戏时长和起跳时间。游戏运行时不需要按空格键；碰撞不会结束游戏，只有成功通过障碍物才得分。</p>
+  <div class="layout">
+    <section class="panel">
+      <canvas id="game" width="900" height="520" aria-label="小鸟定时起跳游戏画面"></canvas>
+      <div class="statusbar">
+        <div class="stat"><span>游戏时间</span><strong id="timeReadout">0.0 / 30.0 s</strong></div>
+        <div class="stat"><span>成功躲避得分</span><strong id="scoreReadout">0</strong></div>
+        <div class="stat"><span>碰撞次数</span><strong id="hitReadout">0</strong></div>
+        <div class="stat"><span>待执行起跳</span><strong id="jumpReadout">0</strong></div>
+      </div>
+      <div class="message" id="status" role="status"><strong>准备就绪。</strong> 设置参数后点击“开始实验”。</div>
+    </section>
+    <aside class="panel">
+      <span class="tag">参数设置</span>
+      <label for="duration">游戏总时长（秒）</label>
+      <input id="duration" type="number" min="5" max="300" step="1" value="30">
+      <p class="hint">建议 10–60 秒。时间到后自动结束并显示结果。</p>
+      <label for="jumpTimes">预设起跳时间（秒）</label>
+      <textarea id="jumpTimes" spellcheck="false">1.5, 3.2, 5.0, 6.7, 8.6, 10.2, 12.0, 13.7, 15.5, 17.2, 19.0, 20.7, 22.5, 24.2, 26.0, 27.7</textarea>
+      <p class="hint">用英文逗号或换行分隔，例如：1.5, 3, 4.25。每个时间点会触发一次自动起跳；超出总时长的时间点会忽略。</p>
+      <div class="buttons">
+        <button class="primary" id="startBtn">开始实验</button>
+        <button class="secondary" id="resetBtn">重置</button>
+      </div>
+      <h3>规则说明</h3>
+      <ul class="rules">
+        <li>小鸟按预设时间自动起跳，不使用空格键控制。</li>
+        <li>撞到障碍物只记录碰撞，不会结束游戏。</li>
+        <li>每个障碍物最多计分一次；小鸟成功通过且未撞到，才加 1 分。</li>
+        <li>时间结束后显示总分、碰撞次数和已执行起跳次数。</li>
+      </ul>
+    </aside>
+  </div>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const durationInput = document.getElementById('duration');
+  const timesInput = document.getElementById('jumpTimes');
+  const startBtn = document.getElementById('startBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const statusEl = document.getElementById('status');
+  const timeEl = document.getElementById('timeReadout');
+  const scoreEl = document.getElementById('scoreReadout');
+  const hitEl = document.getElementById('hitReadout');
+  const jumpEl = document.getElementById('jumpReadout');
+
+  const W = canvas.width, H = canvas.height;
+  const bird = { x: 175, y: H * 0.48, vy: 0, r: 15 };
+  const gravity = 900;
+  const jumpVelocity = -345;
+  const pipeW = 76, gapH = 166, pipeSpeed = 205, pipeInterval = 1.65;
+  let duration = 30, jumpSchedule = [], fired = new Set(), pipes = [];
+  let running = false, finished = false, startTime = 0, lastTime = 0, elapsed = 0;
+  let score = 0, hits = 0, jumpCount = 0, nextPipeAt = 0, flashUntil = 0;
+  let animationId = null;
+
+  function parseSchedule() {
+    return timesInput.value
+      .split(/[,\s;，；]+/)
+      .map(s => Number(s.trim()))
+      .filter(n => Number.isFinite(n) && n >= 0 && n <= duration)
+      .sort((a, b) => a - b);
+  }
+
+  function resetState() {
+    if (animationId !== null) cancelAnimationFrame(animationId);
+    animationId = null;
+    duration = Math.max(5, Math.min(300, Number(durationInput.value) || 30));
+    durationInput.value = duration;
+    jumpSchedule = parseSchedule();
+    fired = new Set();
+    pipes = [];
+    running = false;
+    finished = false;
+    elapsed = 0;
+    score = 0;
+    hits = 0;
+    jumpCount = 0;
+    nextPipeAt = 0.8;
+    flashUntil = 0;
+    bird.y = H * 0.48;
+    bird.vy = 0;
+    startBtn.disabled = false;
+    updateStats();
+    draw();
+    statusEl.innerHTML = '<strong>准备就绪。</strong> 设置参数后点击“开始实验”。已读取 ' + jumpSchedule.length + ' 个有效起跳时间点。';
+  }
+
+  function startGame() {
+    resetState();
+    if (jumpSchedule.length === 0) {
+      statusEl.innerHTML = '<strong>没有有效起跳时间。</strong> 请至少输入一个位于 0 到总时长之间的时间点。';
+      return;
+    }
+    running = true;
+    startBtn.disabled = true;
+    startTime = performance.now();
+    lastTime = startTime;
+    statusEl.innerHTML = '<strong>实验进行中。</strong> 小鸟会按预设时间自动起跳。';
+    animationId = requestAnimationFrame(tick);
+  }
+
+  function updateStats() {
+    timeEl.textContent = elapsed.toFixed(1) + ' / ' + duration.toFixed(1) + ' s';
+    scoreEl.textContent = String(score);
+    hitEl.textContent = String(hits);
+    jumpEl.textContent = String(Math.max(0, jumpSchedule.length - fired.size));
+  }
+
+  function triggerJump() {
+    bird.vy = jumpVelocity;
+    jumpCount++;
+  }
+
+  function tick(now) {
+    if (!running) return;
+    const dt = Math.min((now - lastTime) / 1000, 0.035);
+    lastTime = now;
+    elapsed = Math.min((now - startTime) / 1000, duration);
+
+    for (let i = 0; i < jumpSchedule.length; i++) {
+      if (!fired.has(i) && elapsed >= jumpSchedule[i]) {
+        fired.add(i);
+        triggerJump();
+      }
+    }
+
+    bird.vy += gravity * dt;
+    bird.y += bird.vy * dt;
+    // 触碰画面上下边界不会结束实验，避免小鸟飞出画面。
+    if (bird.y - bird.r < 8) { bird.y = 8 + bird.r; bird.vy = Math.max(0, bird.vy); }
+    if (bird.y + bird.r > H - 14) { bird.y = H - 14 - bird.r; bird.vy = Math.min(0, bird.vy); }
+
+    if (elapsed >= nextPipeAt) {
+      const center = 118 + Math.random() * (H - 236);
+      pipes.push({ x: W + 10, center, hit: false, scored: false });
+      nextPipeAt += pipeInterval;
+    }
+
+    for (const p of pipes) {
+      p.x -= pipeSpeed * dt;
+      const withinX = bird.x + bird.r > p.x && bird.x - bird.r < p.x + pipeW;
+      const outsideGap = bird.y - bird.r < p.center - gapH / 2 || bird.y + bird.r > p.center + gapH / 2;
+      if (withinX && outsideGap && !p.hit) {
+        p.hit = true;
+        hits++;
+        flashUntil = now + 170;
+      }
+      if (!p.scored && p.x + pipeW < bird.x) {
+        p.scored = true;
+        if (!p.hit) score++;
+      }
+    }
+    pipes = pipes.filter(p => p.x + pipeW > -5);
+    updateStats();
+    draw(now);
+
+    if (elapsed >= duration) {
+      running = false;
+      finished = true;
+      startBtn.disabled = false;
+      statusEl.innerHTML = '<strong>实验结束。</strong> 总分：' + score + '；碰撞：' + hits + ' 次；已触发起跳：' + jumpCount + ' 次。';
+      draw(now);
+      animationId = null;
+      return;
+    }
+    animationId = requestAnimationFrame(tick);
+  }
+
+  function draw(now = performance.now()) {
+    // Sky gradient
+    const sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#91d8f4');
+    sky.addColorStop(1, '#e1f8ff');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    // distant hills
+    ctx.fillStyle = '#b4e8ca';
+    ctx.beginPath(); ctx.moveTo(0, 390);
+    for (let x = 0; x <= W; x += 90) ctx.quadraticCurveTo(x + 45, 330 + Math.sin(x / 90) * 18, x + 90, 390);
+    ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.fill();
+
+    // pipes
+    for (const p of pipes) {
+      const topH = p.center - gapH / 2;
+      const bottomY = p.center + gapH / 2;
+      ctx.fillStyle = p.hit ? '#d95b63' : '#2ba66b';
+      ctx.strokeStyle = p.hit ? '#8f2c3a' : '#176c4a';
+      ctx.lineWidth = 4;
+      ctx.fillRect(p.x, 0, pipeW, topH);
+      ctx.strokeRect(p.x, -2, pipeW, topH + 2);
+      ctx.fillRect(p.x - 5, topH - 20, pipeW + 10, 20);
+      ctx.strokeRect(p.x - 5, topH - 20, pipeW + 10, 20);
+      ctx.fillRect(p.x, bottomY, pipeW, H - bottomY);
+      ctx.strokeRect(p.x, bottomY, pipeW, H - bottomY + 2);
+      ctx.fillRect(p.x - 5, bottomY, pipeW + 10, 20);
+      ctx.strokeRect(p.x - 5, bottomY, pipeW + 10, 20);
+      if (p.hit) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 18px system-ui';
+        ctx.fillText('未得分', p.x - 3, p.center + 7);
+      }
+    }
+
+    // ground
+    ctx.fillStyle = '#d7b779'; ctx.fillRect(0, H - 14, W, 14);
+    ctx.fillStyle = '#b38a4c'; ctx.fillRect(0, H - 14, W, 3);
+
+    // bird body
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(Math.max(-0.35, Math.min(0.65, bird.vy / 650)));
+    ctx.fillStyle = '#ffd24d';
+    ctx.strokeStyle = '#9a6419'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(0, 0, bird.r + 2, bird.r, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(7, -5, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#152235'; ctx.beginPath(); ctx.arc(9, -5, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f28b3c'; ctx.beginPath(); ctx.moveTo(13, 1); ctx.lineTo(27, 5); ctx.lineTo(13, 8); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#fff0a8'; ctx.beginPath(); ctx.ellipse(-5, 5, 7, 4, -0.35, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // overlay / status
+    if (now < flashUntil) {
+      ctx.fillStyle = 'rgba(220,60,70,.18)'; ctx.fillRect(0, 0, W, H);
+    }
+    if (!running) {
+      ctx.fillStyle = 'rgba(6,17,31,.56)'; ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 34px system-ui';
+      ctx.fillText(finished ? '实验完成' : '定时起跳实验', W / 2, H / 2 - 12);
+      ctx.font = '18px system-ui';
+      ctx.fillText(finished ? ('最终得分：' + score + '   碰撞：' + hits) : '设置时长和起跳时间，然后点击“开始实验”', W / 2, H / 2 + 28);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  startBtn.addEventListener('click', startGame);
+  resetBtn.addEventListener('click', resetState);
+  durationInput.addEventListener('change', () => { if (!running) resetState(); });
+  timesInput.addEventListener('change', () => { if (!running) resetState(); });
+
+  // Explicitly no keyboard/spacebar controls: all jumps come from the schedule.
+  resetState();
+})();
+</script>
+</body>
+</html>
