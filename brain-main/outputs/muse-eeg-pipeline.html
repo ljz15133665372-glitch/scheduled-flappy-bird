@@ -1,0 +1,2926 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Muse EEG 实时脑机流水线 · 滤波 / 去伪迹 / 特征 / 分类 / 反馈</title>
+<style>
+  :root{
+    --bg:#080c18;
+    --bg2:#0d1424;
+    --card:#111a2e;
+    --card2:#16213a;
+    --line:#22304f;
+    --txt:#e6edf7;
+    --dim:#8ba0c2;
+    --cyan:#4cc9f0;
+    --violet:#7b61ff;
+    --green:#22d3a6;
+    --amber:#ffb020;
+    --red:#ff5d73;
+    --pink:#ff6bd6;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:radial-gradient(1200px 700px at 12% -10%, #16233f 0%, var(--bg) 55%) fixed;
+    color:var(--txt);
+    font:13px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,kbd,.mono{font-family:"Cascadia Mono", Consolas, "Courier New", monospace}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    padding:12px 18px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(20,32,56,.95), rgba(11,17,31,.85));
+    position:sticky; top:0; z-index:20; backdrop-filter:blur(8px);
+  }
+  .brand{font-size:16px; font-weight:700; letter-spacing:.4px; white-space:nowrap}
+  .brand small{display:block; font-weight:400; font-size:11px; color:var(--dim); letter-spacing:0}
+  .flow{display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11.5px}
+  .flow .step{
+    padding:3px 9px; border-radius:999px; border:1px solid var(--line);
+    background:var(--card); color:var(--dim); white-space:nowrap; transition:.25s;
+  }
+  .flow .step.on{color:#031018; background:var(--cyan); border-color:var(--cyan); font-weight:700; box-shadow:0 0 14px rgba(76,201,240,.45)}
+  .flow .step.on.art{background:var(--amber); border-color:var(--amber); box-shadow:0 0 14px rgba(255,176,32,.45)}
+  .flow .step.on.feat{background:var(--violet); border-color:var(--violet); color:#fff; box-shadow:0 0 14px rgba(123,97,255,.45)}
+  .flow .step.on.cls{background:var(--green); border-color:var(--green); box-shadow:0 0 14px rgba(34,211,166,.45)}
+  .flow .step.on.fb{background:var(--pink); border-color:var(--pink); box-shadow:0 0 14px rgba(255,107,214,.45)}
+  .flow .arw{color:#42557a}
+  .topstats{margin-left:auto; display:flex; gap:14px; font-size:11px; color:var(--dim); flex-wrap:wrap}
+  .topstats b{color:var(--txt); font-variant-numeric:tabular-nums}
+
+  /* ---------- 主体 ---------- */
+  main{display:grid; grid-template-columns:296px minmax(0,1fr); gap:14px; padding:14px 18px 40px; align-items:start}
+  @media (max-width:1080px){ main{grid-template-columns:1fr} }
+
+  .panel,.card{
+    background:linear-gradient(180deg,var(--card),var(--bg2));
+    border:1px solid var(--line); border-radius:12px;
+  }
+  .panel{position:sticky; top:76px; max-height:calc(100vh - 92px); overflow:auto}
+  .panel::-webkit-scrollbar,.log::-webkit-scrollbar{width:8px}
+  .panel::-webkit-scrollbar-thumb,.log::-webkit-scrollbar-thumb{background:#26365a; border-radius:8px}
+
+  .pblock{border-bottom:1px solid var(--line); padding:12px 14px}
+  .pblock:last-child{border-bottom:0}
+  .pblock > h3{
+    margin:0 0 10px; font-size:11px; letter-spacing:1.4px; text-transform:uppercase;
+    color:var(--cyan); display:flex; align-items:center; gap:8px; font-weight:700;
+  }
+  .pblock > h3 .n{
+    width:17px;height:17px;border-radius:5px;background:var(--cyan);color:#04121a;
+    display:grid;place-items:center;font-size:10px;font-weight:800;
+  }
+  .pblock.art > h3{color:var(--amber)} .pblock.art > h3 .n{background:var(--amber)}
+  .pblock.feat > h3{color:var(--violet)} .pblock.feat > h3 .n{background:var(--violet);color:#fff}
+  .pblock.cls > h3{color:var(--green)} .pblock.cls > h3 .n{background:var(--green)}
+
+  .row{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px}
+  .row > label{color:var(--dim); font-size:12px; white-space:nowrap}
+  .row .val{font-variant-numeric:tabular-nums; color:var(--txt); font-size:12px; min-width:56px; text-align:right}
+  input[type=range]{width:118px; accent-color:var(--cyan); background:transparent}
+  input[type=number],select,input[type=text]{
+    background:#0a1120; color:var(--txt); border:1px solid var(--line);
+    border-radius:7px; padding:4px 7px; font-size:12px; outline:none; font-family:inherit;
+  }
+  input[type=number]{width:74px; text-align:right}
+  input[type=number]:focus,select:focus,input[type=text]:focus{border-color:var(--cyan)}
+  select{width:100%}
+
+  .switch{display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none; margin-bottom:8px}
+  .switch input{display:none}
+  .switch i{
+    width:34px;height:18px;border-radius:999px;background:#243350;position:relative;transition:.2s;flex:0 0 auto;
+  }
+  .switch i::after{
+    content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+    background:#7d90b3;transition:.2s;
+  }
+  .switch input:checked + i{background:rgba(76,201,240,.35)}
+  .switch input:checked + i::after{left:18px;background:var(--cyan)}
+  .switch span{font-size:12px;color:var(--txt)}
+
+  button{
+    font-family:inherit; font-size:12px; font-weight:600; cursor:pointer;
+    background:#1b2740; color:var(--txt); border:1px solid var(--line);
+    border-radius:9px; padding:7px 10px; transition:.15s; width:100%;
+  }
+  button:hover{background:#243354; border-color:#33487a}
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  button.primary{background:linear-gradient(180deg,#39b6e8,#1e86c4); border-color:#39b6e8; color:#031420}
+  button.good{background:linear-gradient(180deg,#28e0b4,#13a483); border-color:#28e0b4; color:#03211a}
+  button.warn{background:linear-gradient(180deg,#ffc247,#e08c00); border-color:#ffc247; color:#241700}
+  button.ghost{background:transparent}
+  .btns{display:grid; grid-template-columns:1fr 1fr; gap:7px}
+  .btns .full{grid-column:1 / -1}
+
+  /* ---------- 舞台 ---------- */
+  .stage{display:grid; gap:14px; grid-template-columns:repeat(2,minmax(0,1fr)); min-width:0}
+  @media (max-width:900px){ .stage{grid-template-columns:1fr} }
+  .card{min-width:0; overflow:hidden}
+  .card.wide{grid-column:1 / -1}
+  .card > header{
+    display:flex; align-items:center; gap:10px; padding:9px 13px;
+    border-bottom:1px solid var(--line); background:rgba(255,255,255,.015);
+  }
+  .card > header h2{margin:0; font-size:12.5px; font-weight:700; letter-spacing:.3px}
+  .card > header .tag{
+    font-size:10px; padding:2px 7px; border-radius:999px; border:1px solid var(--line); color:var(--dim)
+  }
+  .card > header .hint{margin-left:auto; font-size:10.5px; color:var(--dim); font-weight:400}
+  .card .body{padding:10px 12px}
+  canvas{display:block; width:100%; border-radius:8px}
+  .legend{display:flex; gap:12px; flex-wrap:wrap; font-size:10.5px; color:var(--dim); padding:6px 2px 0}
+  .legend b{display:inline-block;width:16px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
+
+  /* 分类输出 */
+  .verdict{display:flex; align-items:center; gap:16px; padding:4px 2px 12px}
+  .verdict .big{
+    font-size:30px; font-weight:800; letter-spacing:1px; line-height:1.1;
+    background:linear-gradient(180deg,#7cf0d4,#20b892); -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .verdict .big.neutral{background:linear-gradient(180deg,#b9c8e2,#7b8bab); -webkit-background-clip:text; background-clip:text}
+  .verdict .sub{font-size:11px; color:var(--dim)}
+  .bar{height:12px; border-radius:999px; background:#0a1120; border:1px solid var(--line); overflow:hidden; position:relative}
+  .bar > i{display:block; height:100%; width:0; transition:width .18s linear; background:linear-gradient(90deg,#22d3a6,#4cc9f0)}
+  .barmeta{display:flex; justify-content:space-between; font-size:10.5px; color:var(--dim); margin:5px 0 10px}
+
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:11.5px}
+  .kv dt{color:var(--dim)} .kv dd{margin:0; text-align:right; font-variant-numeric:tabular-nums}
+  .pill{display:inline-block; font-size:10px; padding:1px 6px; border-radius:999px; border:1px solid var(--line); color:var(--dim)}
+  .pill.ok{color:var(--green); border-color:rgba(34,211,166,.5)}
+  .pill.bad{color:var(--red); border-color:rgba(255,93,115,.5)}
+
+  table.mini{width:100%; border-collapse:collapse; font-size:11px}
+  table.mini th,table.mini td{padding:4px 6px; border-bottom:1px solid #1a2541; text-align:right; font-variant-numeric:tabular-nums}
+  table.mini th:first-child,table.mini td:first-child{text-align:left}
+  table.mini th{color:var(--dim); font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:.5px}
+  table.mini tr.rej td{color:var(--red); background:rgba(255,93,115,.07)}
+
+  .log{max-height:190px; overflow:auto; font-size:11px; line-height:1.65; padding:8px 10px}
+  .log div{border-bottom:1px dashed #17223c; padding:2px 0; white-space:pre-wrap}
+  .log .t{color:#5d7098}
+  .log .ok{color:var(--green)} .log .warn{color:var(--amber)} .log .err{color:var(--red)} .log .hl{color:var(--cyan)}
+
+  .note{font-size:11px; color:var(--dim); padding:8px 12px; border-top:1px solid var(--line)}
+  .note b{color:var(--txt)}
+  .flash{animation:fl .6s ease-out}
+  @keyframes fl{0%{background:rgba(255,93,115,.28)}100%{background:transparent}}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Muse EEG 实时脑机流水线
+    <small>muse-js 原始 eegReadings → 滤波 → 去伪迹 → 特征 → 分类 → 反馈</small>
+  </div>
+  <div class="flow" id="flow">
+    <span class="step on" data-k="raw">④ 原始信号</span><span class="arw">→</span>
+    <span class="step on" data-k="filt">带通 + 陷波</span><span class="arw">→</span>
+    <span class="step on art" data-k="art">去伪迹 (回归/ICA)</span><span class="arw">→</span>
+    <span class="step on feat" data-k="feat">FFT 频带特征</span><span class="arw">→</span>
+    <span class="step on cls" data-k="cls">分类器</span><span class="arw">→</span>
+    <span class="step on fb" data-k="fb">反馈</span>
+  </div>
+  <div class="topstats">
+    <span>窗口 <b id="stWin">0</b></span>
+    <span>速率 <b id="stRate">0</b> win/s</span>
+    <span>链路耗时 <b id="stMs">0</b> ms</span>
+    <span>已处理 <b id="stSamp">0</b> samples</span>
+  </div>
+</div>
+
+<main>
+  <!-- ================= 控制面板 ================= -->
+  <aside class="panel">
+
+    <div class="pblock">
+      <h3><span class="n">S</span>数据源</h3>
+      <div class="row"><label>模式</label>
+        <select id="srcMode" style="width:150px">
+          <option value="mixed">模拟：睁眼/闭眼交替</option>
+          <option value="closed">模拟：持续闭眼(α强)</option>
+          <option value="open">模拟：持续睁眼(α弱)</option>
+          <option value="json">粘贴真实 muse-js 包</option>
+        </select>
+      </div>
+      <div class="row"><label>时间加速</label>
+        <input type="range" id="speed" min="1" max="12" step="1" value="4"><span class="val" id="speedV">4×</span>
+      </div>
+      <textarea id="jsonBox" placeholder='粘贴 muse-js 的 eegReadings JSON（数组或逐行对象），例如：
+[{"index":0,"eegChannel":0,"samples":[...],"timestamp":1712345678901}, ...]'
+        style="display:none;width:100%;height:80px;margin-top:6px;background:#0a1120;color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px;font-size:11px;font-family:inherit;resize:vertical"></textarea>
+    </div>
+
+    <div class="pblock">
+      <h3><span class="n">1</span>滤波</h3>
+      <label class="switch"><input type="checkbox" id="bpOn" checked><i></i><span>带通 1–50 Hz</span></label>
+      <div class="row"><label>低截止</label><input type="number" id="bpLow" value="1" step="0.5" min="0.1" max="40"><span class="val">Hz</span></div>
+      <div class="row"><label>高截止</label><input type="number" id="bpHigh" value="50" step="1" min="5" max="120"><span class="val">Hz</span></div>
+      <div class="row"><label>阶数</label>
+        <select id="bpOrder" style="width:80px"><option>2</option><option selected>4</option><option>6</option><option>8</option></select>
+      </div>
+      <label class="switch"><input type="checkbox" id="notchOn" checked><i></i><span>陷波（工频）</span></label>
+      <div class="row"><label>基频</label>
+        <select id="notchF" style="width:80px"><option value="50" selected>50 Hz</option><option value="60">60 Hz</option></select>
+        <label style="font-size:11px">谐波 <input type="checkbox" id="notchH" checked style="accent-color:var(--cyan)"></label>
+      </div>
+      <div class="row"><label>Q 值</label><input type="range" id="notchQ" min="8" max="60" step="1" value="30"><span class="val" id="notchQV">30</span></div>
+    </div>
+
+    <div class="pblock art">
+      <h3><span class="n">2</span>去伪迹</h3>
+      <label class="switch"><input type="checkbox" id="regOn" checked><i></i><span>回归法（AF7/AF8 作 EOG）</span></label>
+      <label class="switch"><input type="checkbox" id="icaOn" checked><i></i><span>ICA（FastICA + 伪迹剔除）</span></label>
+      <div class="row"><label>峰度阈值</label><input type="range" id="kurtT" min="2" max="20" step="0.5" value="6"><span class="val" id="kurtTV">6.0</span></div>
+      <div class="row"><label>低频占比阈值</label><input type="range" id="lowT" min="0.2" max="0.95" step="0.05" value="0.6"><span class="val" id="lowTV">0.60</span></div>
+    </div>
+
+    <div class="pblock feat">
+      <h3><span class="n">3</span>特征 &amp; 窗口</h3>
+      <div class="row"><label>窗口长度</label>
+        <select id="winSec" style="width:80px">
+          <option>0.5</option><option selected>1</option><option>2</option><option>4</option>
+        </select><span class="val">s</span>
+      </div>
+      <div class="row"><label>重叠</label><input type="range" id="overlap" min="0" max="90" step="10" value="50"><span class="val" id="overlapV">50%</span></div>
+      <div class="row"><label>FFT 点数</label>
+        <select id="fftN" style="width:80px"><option value="0" selected>自动</option><option>256</option><option>512</option><option>1024</option></select>
+      </div>
+      <div class="row"><label>特征集</label>
+        <select id="featSet" style="width:150px">
+          <option value="all" selected>频带功率 + 比值 + 熵</option>
+          <option value="bands">仅频带相对功率</option>
+          <option value="ab">仅 α/β 比</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="pblock cls">
+      <h3><span class="n">4</span>分类器</h3>
+      <div class="row"><label>模型</label>
+        <select id="clfType" style="width:150px">
+          <option value="lda" selected>LDA（线性判别）</option>
+          <option value="svm">线性 SVM（Pegasos）</option>
+          <option value="mlp">MLP 神经网络</option>
+        </select>
+      </div>
+      <div class="row"><label>标准化</label>
+        <label class="switch" style="margin:0"><input type="checkbox" id="scaleOn" checked><i></i><span>z-score</span></label>
+      </div>
+      <div class="btns">
+        <button class="good full" id="btnCalib">🎯 校准（采集 8 秒标注数据并训练）</button>
+        <button class="ghost" id="btnCalibClosed">采 4s 闭眼</button>
+        <button class="ghost" id="btnCalibOpen">采 4s 睁眼</button>
+      </div>
+      <div class="row" style="margin-top:9px"><label>校准样本</label><span class="val" id="calibCount">闭眼 0 / 睁眼 0</span></div>
+    </div>
+
+    <div class="pblock">
+      <h3><span class="n">R</span>运行与反馈</h3>
+      <div class="btns">
+        <button class="primary full" id="btnRun">▶ 开始采集</button>
+        <button class="warn" id="btnBlink">👁 注入眨眼</button>
+        <button class="warn" id="btnHum">⚡ 注入工频</button>
+        <button class="ghost" id="btnPause" disabled>⏸ 暂停</button>
+        <button class="ghost" id="btnStep" disabled>⏭ 单步</button>
+        <button class="ghost full" id="btnReset">♻ 重置全部状态</button>
+      </div>
+      <div class="row" style="margin-top:10px"><label>反馈外设</label>
+        <label class="switch" style="margin:0"><input type="checkbox" id="fbHttp"><i></i><span>HTTP 回传</span></label>
+      </div>
+      <div class="row"><label>端点</label><input type="text" id="fbUrl" value="http://localhost:8080/eeg" style="width:150px"></div>
+    </div>
+  </aside>
+
+  <!-- ================= 图形舞台 ================= -->
+  <section class="stage">
+
+    <div class="card wide">
+      <header>
+        <h2>①原始 vs ②滤波后 vs ③去伪迹后</h2>
+        <span class="tag">4 通道 / 时域</span>
+        <span class="hint" id="waveHint">灰=原始(带工频+眨眼) · 青=滤波后 · 绿=去伪迹后</span>
+      </header>
+      <div class="body">
+        <canvas id="cvWave" height="300"></canvas>
+        <div class="legend">
+          <span><b style="background:#54637f"></b>④ 原始 eegReadings</span>
+          <span><b style="background:#4cc9f0"></b>带通+陷波后</span>
+          <span><b style="background:#22d3a6"></b>去伪迹后</span>
+          <span><b style="background:#ff5d73"></b>眨眼区间</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h2>功率谱密度 (Welch)</h2><span class="tag">FFT → PSD</span>
+        <span class="hint" id="psdHint">δ θ α β γ 频带</span></header>
+      <div class="body"><canvas id="cvPsd" height="230"></canvas></div>
+    </div>
+
+    <div class="card">
+      <header><h2>频带功率</h2><span class="tag">μV² · 4 通道</span>
+        <span class="hint" id="bandHint">列=δ/θ/α/β/γ</span></header>
+      <div class="body"><canvas id="cvBands" height="230"></canvas></div>
+    </div>
+
+    <div class="card">
+      <header><h2>分类输出（反馈）</h2><span class="tag" id="clfTag">未训练</span></header>
+      <div class="body">
+        <div class="verdict">
+          <div class="big neutral" id="verdict">—</div>
+          <div class="sub" id="verdictSub">先点左侧「校准」训练模型</div>
+        </div>
+        <div class="barmeta"><span>置信度</span><span id="confV">0%</span></div>
+        <div class="bar"><i id="confBar"></i></div>
+        <div class="barmeta"><span>α/β 比值</span><span id="abV">—</span></div>
+        <div class="bar"><i id="abBar" style="background:linear-gradient(90deg,#7b61ff,#ff6bd6)"></i></div>
+        <dl class="kv" style="margin-top:12px">
+          <dt>模型</dt><dd id="kvModel">—</dd>
+          <dt>训练准确率</dt><dd id="kvTrain">—</dd>
+          <dt>训练样本</dt><dd id="kvN">—</dd>
+          <dt>反馈帧率</dt><dd id="kvFb">—</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="card">
+      <header><h2>ICA 成分诊断</h2><span class="tag">伪迹判定</span>
+        <span class="hint">峰度≈3 为类高斯，偏离大者常为眨眼/肌肉</span></header>
+      <div class="body">
+        <table class="mini" id="icaTable">
+          <thead><tr><th>成分</th><th>峰度</th><th>低频占比</th><th>眼电相关</th><th>判定</th></tr></thead>
+          <tbody id="icaBody"><tr><td colspan="5" style="text-align:center;color:#5d7098">等待窗口…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card wide">
+      <header><h2>运行日志</h2><span class="tag">pipeline trace</span>
+        <span class="hint">每条 = 一个分析窗口的完整链路</span></header>
+      <div class="log" id="log"></div>
+      <div class="note">
+        <b>看这里：</b>关闭「陷波」可见 50 Hz 工频在 PSD 上竖起的尖峰；关闭「ICA/回归」可见眨眼时波形出现的巨大低频摆动。
+        本页所有算法（Butterworth、陷波、FFT、FastICA、LDA/SVM/MLP）均为原生 JS 实现，无第三方依赖。
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ==================== 01-signal.js ==================== */
+/* =============================================================================
+ *  01-signal.js  —  ④ 数据入口层
+ *  muse-js 的 eegReadings 是**未经滤波的原始信号**（含工频干扰 + 眼电伪迹），
+ *  本文件负责两件事：
+ *    (1) 真实数据：解析 muse-js 吐出的原始包（JSON 文本 / 对象）
+ *    (2) 演示数据：合成一路"物理上说得过去"的 4 通道 EEG，便于离线验证整条链路
+ *  所有信号单位统一使用 µV。
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+
+  NS.CHANNELS = ['TP9', 'AF7', 'AF8', 'TP10'];   // 与 muse-js 的 eegChannel 索引一致
+  NS.SAMPLE_RATE = 256;                          // Muse 标称 256 Hz
+  NS.PACKET_SIZE = 12;                           // muse-js 每个包每通道 12 个样本
+  NS.UNIT = 'µV';
+
+  /** 可复现伪随机（mulberry32），保证演示可重放。 */
+  NS.makeRng = function (seed) {
+    let s = (seed >>> 0) || 0x9e3779b9;
+    return function () {
+      s = (s + 0x6D2B79F5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+
+  /* ---------------------------------------------------------------------------
+   * 合成 Muse 信号源
+   * 组成：1/f 背景噪声 + α 节律(10Hz，闭眼增强) + θ + 慢漂移
+   *      + 工频(50/100Hz，可注入) + 眨眼 (EOG，额区强、颞区弱泄漏)
+   * ------------------------------------------------------------------------ */
+  function MuseSimulator(opts) {
+    opts = opts || {};
+    this.fs = opts.fs || NS.SAMPLE_RATE;
+    this.rng = NS.makeRng(opts.seed || 20261020);
+    this.mode = opts.mode || 'mixed';     // mixed | closed | open
+    this.sampleIndex = 0;                 // 已生成样本数（每通道）
+    this.packetIndex = 0;
+    this.channelCursor = 0;
+    this.alphaAmp = 9;
+    this.humScale = 1;                    // 1 = 常态工频干扰
+    this.humBoost = 0;                    // 手动注入的额外工频能量
+    this.extraBlinks = [];
+    this.blinkSchedule = [];
+    this.blinkGenUntil = 0;
+
+    const self = this;
+    this.state = NS.CHANNELS.map(function () {
+      return {
+        n1: 0, n2: 0,
+        alphaPhase: self.rng() * 6.2832,
+        thetaPhase: self.rng() * 6.2832,
+        driftPhase: self.rng() * 6.2832,
+        alphaGain: 0.7 + self.rng() * 0.5
+      };
+    });
+    // 各通道对眨眼(EOG)的灵敏度：额区最强，颞区弱且反相
+    this.eogGain = [0.20, 1.00, 1.12, 0.16];
+  }
+
+  MuseSimulator.prototype._ensureBlinks = function (t) {
+    const r = this.rng;
+    while (this.blinkGenUntil < t + 60) {
+      const gap = 2.2 + r() * 5.0;                     // 每 2.2~7.2 秒一次眨眼
+      this.blinkGenUntil += gap;
+      this.blinkSchedule.push({ t0: this.blinkGenUntil, dur: 0.55, amp: 130 + r() * 90 });
+      if (this.blinkSchedule.length > 4000) this.blinkSchedule.splice(0, 2000);
+    }
+  };
+
+  /** 归一化双指数眨眼波形：快升(20ms)慢降(120ms)，更像真实 EOG。 */
+  MuseSimulator._blinkShape = function (tt) {
+    if (tt < 0 || tt > 0.55) return 0;
+    const tR = 0.020, tD = 0.120;
+    const w = Math.exp(-tt / tD) - Math.exp(-tt / tR);
+    return w / 0.5825;   // 峰值归一化到 1
+  };
+
+  MuseSimulator.prototype._eogAt = function (t, ch) {
+    let eog = 0;
+    const list = this.blinkSchedule;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (t < b.t0) break;
+      const tt = t - b.t0;
+      if (tt <= 0.55) eog += b.amp * MuseSimulator._blinkShape(tt);
+    }
+    for (let i = 0; i < this.extraBlinks.length; i++) {
+      const b = this.extraBlinks[i];
+      const tt = t - b.t0;
+      if (tt >= 0 && tt <= 0.55) eog += b.amp * MuseSimulator._blinkShape(tt);
+    }
+    return eog * this.eogGain[ch] * (this.state[ch].alphaGain > 0.9 ? 0.9 : 1.0);
+  };
+
+  MuseSimulator.prototype._updateState = function (t) {
+    // 模式决定 α 强度：闭眼 α 增强，睁眼 α 受抑（α 阻断）
+    let target = 9;
+    if (this.mode === 'closed') target = 16;
+    else if (this.mode === 'open') target = 2.5;
+    else if (this.mode === 'mixed') target = (Math.floor(t / 6) % 2 === 0) ? 3.0 : 15.0;
+    this.alphaAmp += (target - this.alphaAmp) * 0.004;   // 缓慢过渡，避免阶跃
+    this.humBoost *= 0.99997;                            // 手动注入的工频缓慢衰减
+    this.humScale = 1 + this.humBoost;
+  };
+
+  MuseSimulator.prototype._sample = function (ch, t) {
+    const st = this.state[ch];
+    const r = this.rng;
+    const w = r() * 2 - 1;
+
+    // --- 1/f 背景：白噪声经两个一阶低通 -> 近似粉噪声 ---
+    st.n1 += (w - st.n1) * (2 * Math.PI * 3 / this.fs);    // 慢成分
+    st.n2 += (w - st.n2) * (2 * Math.PI * 30 / this.fs);   // 快成分
+    const noise = st.n1 * 13 + st.n2 * 3.5 + w * 1.2;
+
+    // --- α 节律 10Hz（含轻微频率抖动）---
+    const aAmp = this.alphaAmp * st.alphaGain;
+    const alpha = aAmp * Math.sin(2 * Math.PI * 10 * t + st.alphaPhase)
+      + 0.35 * aAmp * Math.sin(2 * Math.PI * 10.7 * t + st.alphaPhase * 1.7);
+
+    // --- θ 与慢漂移 ---
+    const theta = 2.2 * Math.sin(2 * Math.PI * 5.2 * t + st.thetaPhase);
+    const drift = 7.5 * Math.sin(2 * Math.PI * 0.18 * t + st.driftPhase);
+
+    // --- 工频干扰（50Hz + 二次谐波）---
+    const hum = this.humScale * (6.6 * Math.sin(2 * Math.PI * 50 * t)
+      + 2.3 * Math.sin(2 * Math.PI * 100 * t + 0.7));
+
+    // --- 眼电伪迹 ---
+    const eog = this._eogAt(t, ch);
+
+    return noise + alpha + theta + drift + hum + eog;
+  };
+
+  /** 取一个 muse-js 风格的原始包：{index, eegChannel, samples[12], timestamp} */
+  MuseSimulator.prototype.nextPacket = function () {
+    const ch = this.channelCursor;
+    const n = NS.PACKET_SIZE;
+    const samples = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const t = (this.sampleIndex + i) / this.fs;
+      this._ensureBlinks(t);
+      this._updateState(t);
+      samples[i] = this._sample(ch, t);
+    }
+    const pkt = {
+      index: this.packetIndex++,
+      eegChannel: ch,
+      samples: samples,
+      timestamp: Date.now()
+    };
+    this.channelCursor = (this.channelCursor + 1) % NS.CHANNELS.length;
+    if (this.channelCursor === 0) this.sampleIndex += n;
+    return pkt;
+  };
+
+  MuseSimulator.prototype.setMode = function (m) { this.mode = m; };
+
+  /** 手动注入一次眨眼伪迹（用于直观观察去伪迹效果）。 */
+  MuseSimulator.prototype.injectBlink = function (amp) {
+    this.extraBlinks.push({
+      t0: this.sampleIndex / this.fs + 0.02,
+      dur: 0.55,
+      amp: amp || 240
+    });
+    if (this.extraBlinks.length > 40) this.extraBlinks.shift();
+  };
+
+  /** 手动注入一波工频干扰。 */
+  MuseSimulator.prototype.injectHum = function (scale) {
+    this.humBoost += (scale == null ? 3.0 : scale);
+    if (this.humBoost > 12) this.humBoost = 12;
+  };
+
+  NS.MuseSimulator = MuseSimulator;
+
+  /* ---------------------------------------------------------------------------
+   * 真实 muse-js 数据解析
+   * 兼容字段名：eegChannel | channel | electrode；samples | values | data
+   * 兼容外层包装：eegReadings / readings / 纯数组 / 每行一个 JSON 对象
+   * ------------------------------------------------------------------------ */
+  NS.parseMuseJson = function (text) {
+    const out = [];
+    const pushOne = function (obj) {
+      if (!obj || typeof obj !== 'object') return;
+      let ch = obj.eegChannel;
+      if (ch == null) ch = obj.channel;
+      if (ch == null) ch = obj.electrode;
+      const raw = obj.samples || obj.values || obj.data;
+      if (ch == null || !raw || !raw.length) return;
+      const arr = new Array(raw.length);
+      for (let i = 0; i < raw.length; i++) arr[i] = Number(raw[i]);
+      out.push({
+        index: Number(obj.index) || out.length,
+        eegChannel: Number(ch),
+        samples: arr,
+        timestamp: Number(obj.timestamp) || 0
+      });
+    };
+    const walk = function (d) {
+      if (Array.isArray(d)) { d.forEach(walk); return; }
+      if (d && typeof d === 'object') {
+        if (Array.isArray(d.eegReadings)) { d.eegReadings.forEach(walk); return; }
+        if (Array.isArray(d.readings)) { d.readings.forEach(walk); return; }
+        pushOne(d);
+      }
+    };
+
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      data = [];
+      const lines = String(text).split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim().replace(/,\s*$/, '');
+        if (!line) continue;
+        try { data.push(JSON.parse(line)); } catch (_) { /* 跳过坏行 */ }
+      }
+    }
+    walk(data);
+
+    // 按时间戳排序，保证拼装顺序正确
+    out.sort(function (a, b) {
+      if (a.timestamp && b.timestamp && a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+      return a.index - b.index;
+    });
+    return out;
+  };
+
+  /**
+   * 把原始包拼装成 4×N 通道矩阵。
+   * @returns {{fs:number, channels:number[][], packets:number, seconds:number}}
+   */
+  NS.assembleRecording = function (packets, fs) {
+    fs = fs || NS.SAMPLE_RATE;
+    const chans = [[], [], [], []];
+    for (let i = 0; i < packets.length; i++) {
+      const p = packets[i];
+      const c = p.eegChannel;
+      if (c == null || !chans[c]) continue;
+      for (let j = 0; j < p.samples.length; j++) chans[c].push(p.samples[j]);
+    }
+    // 只按"有数据的通道"对齐；完全缺失的通道补零，保证后续 DSP 仍能跑
+    let minLen = Infinity, any = false;
+    for (let c = 0; c < 4; c++) {
+      if (chans[c].length > 0) { any = true; minLen = Math.min(minLen, chans[c].length); }
+    }
+    if (!any) minLen = 0;
+    for (let c = 0; c < 4; c++) {
+      chans[c] = chans[c].length === 0 ? new Array(minLen).fill(0) : chans[c].slice(0, minLen);
+    }
+    return { fs: fs, channels: chans, packets: packets.length, seconds: minLen / fs };
+  };
+
+})(window.EEG = window.EEG || {});
+
+/* ==================== 02-dsp.js ==================== */
+/* =============================================================================
+ *  02-dsp.js  —  ② 滤波 + ④ 频域基础
+ *  全是手写实现，无第三方库：
+ *    - Biquad（RBJ Cookbook 系数，Transposed Direct Form II 结构）
+ *    - Butterworth 带通 = 高通(1Hz) + 低通(50Hz) 级联，Q 值按巴特沃斯极点分布
+ *    - 陷波（工频 50/60Hz 及其谐波）
+ *    - radix-2 FFT + Hann 窗 + Welch 平均功率谱 (µV²/Hz)
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+  const DSP = NS.DSP = NS.DSP || {};
+
+  /* ------------------------------------------------------------------ Biquad */
+  function Biquad(b0, b1, b2, a1, a2) {
+    this.b0 = b0; this.b1 = b1; this.b2 = b2;
+    this.a1 = a1; this.a2 = a2;   // 已按 a0 归一化
+    this.z1 = 0; this.z2 = 0;
+  }
+  Biquad.prototype.process = function (x) {
+    const y = this.b0 * x + this.z1;
+    this.z1 = this.b1 * x - this.a1 * y + this.z2;
+    this.z2 = this.b2 * x - this.a2 * y;
+    return y;
+  };
+  Biquad.prototype.reset = function () { this.z1 = 0; this.z2 = 0; };
+
+  Biquad.lowPass = function (fc, fs, q) {
+    const w0 = 2 * Math.PI * fc / fs, cs = Math.cos(w0), sn = Math.sin(w0);
+    const alpha = sn / (2 * q);
+    const b0 = (1 - cs) / 2, b1 = 1 - cs, b2 = (1 - cs) / 2;
+    const a0 = 1 + alpha, a1 = -2 * cs, a2 = 1 - alpha;
+    return new Biquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+  };
+  Biquad.highPass = function (fc, fs, q) {
+    const w0 = 2 * Math.PI * fc / fs, cs = Math.cos(w0), sn = Math.sin(w0);
+    const alpha = sn / (2 * q);
+    const b0 = (1 + cs) / 2, b1 = -(1 + cs), b2 = (1 + cs) / 2;
+    const a0 = 1 + alpha, a1 = -2 * cs, a2 = 1 - alpha;
+    return new Biquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+  };
+  Biquad.notch = function (f0, fs, q) {
+    const w0 = 2 * Math.PI * f0 / fs, cs = Math.cos(w0), sn = Math.sin(w0);
+    const alpha = sn / (2 * q);
+    const b0 = 1, b1 = -2 * cs, b2 = 1;
+    const a0 = 1 + alpha, a1 = -2 * cs, a2 = 1 - alpha;
+    return new Biquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+  };
+  Biquad.bandPass = function (f0, fs, q) {
+    const w0 = 2 * Math.PI * f0 / fs, cs = Math.cos(w0), sn = Math.sin(w0);
+    const alpha = sn / (2 * q);
+    const b0 = alpha, b1 = 0, b2 = -alpha;
+    const a0 = 1 + alpha, a1 = -2 * cs, a2 = 1 - alpha;
+    return new Biquad(b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0);
+  };
+  DSP.Biquad = Biquad;
+
+  /**
+   * 巴特沃斯极点对应的 Q 值：Q_k = 1 / (2·cos((2k+1)π / (2N)))
+   * N 阶滤波器由 N/2 个二阶节级联而成，这样通带才真正平坦（无纹波）。
+   */
+  DSP.butterQ = function (order) {
+    const n = Math.max(2, order - (order % 2));   // 取偶数阶
+    const qs = [];
+    for (let k = 0; k < n / 2; k++) {
+      qs.push(1 / (2 * Math.cos((2 * k + 1) * Math.PI / (2 * n))));
+    }
+    return qs;
+  };
+
+  /* ------------------------------------------------- 滤波设计（按配置生成系数） */
+  /**
+   * @param cfg {fs, bandpass:{enabled,low,high,order}, notch:{enabled,f0,harmonics,q}}
+   * @returns {Array<{name:string, sections:Array<{b0,b1,b2,a1,a2}>}>}
+   */
+  DSP.design = function (cfg) {
+    const fs = cfg.fs;
+    const stages = [];
+    const bp = cfg.bandpass || {};
+    if (bp.enabled) {
+      const qs = DSP.butterQ(bp.order || 4);
+      const hp = [], lp = [];
+      qs.forEach(function (q) {
+        hp.push(DSP._coeff(Biquad.highPass(bp.low, fs, q)));
+        lp.push(DSP._coeff(Biquad.lowPass(bp.high, fs, q)));
+      });
+      stages.push({ name: '高通 ' + bp.low + 'Hz (' + (bp.order || 4) + '阶)', sections: hp });
+      stages.push({ name: '低通 ' + bp.high + 'Hz (' + (bp.order || 4) + '阶)', sections: lp });
+    }
+    const nt = cfg.notch || {};
+    if (nt.enabled) {
+      const f0 = nt.f0 || 50;
+      const q = nt.q || 30;
+      const secs = [];
+      const maxH = nt.harmonics ? Math.floor((fs / 2 - 5) / f0) : 1;
+      for (let h = 1; h <= Math.max(1, maxH); h++) {
+        const f = f0 * h;
+        if (f >= fs / 2 - 2) break;
+        secs.push(DSP._coeff(Biquad.notch(f, fs, q)));
+      }
+      stages.push({ name: '陷波 ' + f0 + 'Hz ×' + secs.length, sections: secs });
+    }
+    return stages;
+  };
+
+  DSP._coeff = function (bq) {
+    return { b0: bq.b0, b1: bq.b1, b2: bq.b2, a1: bq.a1, a2: bq.a2 };
+  };
+
+  /** 生成滤波器的幅频响应（用于展示） */
+  DSP.responseDb = function (stages, fs, nPoints) {
+    nPoints = nPoints || 256;
+    const out = new Array(nPoints);
+    for (let i = 0; i < nPoints; i++) {
+      const f = (i / (nPoints - 1)) * (fs / 2);
+      const w = 2 * Math.PI * f / fs;
+      // 复数频率响应 H(e^{jw}) = Π H_stage(e^{jw})
+      let gain = 1;
+      for (let s = 0; s < stages.length; s++) {
+        const secs = stages[s].sections;
+        for (let k = 0; k < secs.length; k++) {
+          const c = secs[k];
+          // 分子 b0 + b1 z^-1 + b2 z^-2 ; 分母 1 + a1 z^-1 + a2 z^-2
+          const cw = Math.cos(w), sw = Math.sin(w);
+          const c2w = Math.cos(2 * w), s2w = Math.sin(2 * w);
+          const nr = c.b0 + c.b1 * cw + c.b2 * c2w, ni = -(c.b1 * sw + c.b2 * s2w);
+          const dr = 1 + c.a1 * cw + c.a2 * c2w, di = -(c.a1 * sw + c.a2 * s2w);
+          const dm = dr * dr + di * di;
+          const hr = (nr * dr + ni * di) / (dm || 1e-12);
+          const hi = (ni * dr - nr * di) / (dm || 1e-12);
+          gain *= Math.sqrt(hr * hr + hi * hi);
+        }
+      }
+      out[i] = { freq: f, db: 20 * Math.log10(Math.max(gain, 1e-6)) };
+    }
+    return out;
+  };
+
+  /* ------------------------------------------------------------ 在线滤波链路 */
+  /** 每通道独立状态的级联滤波器组，样本级流式处理。 */
+  function FilterChain(cfg, nCh) {
+    this.cfg = cfg;
+    this.nCh = nCh || 4;
+    this.stages = [];
+    this.units = [];
+    this.rebuild();
+  }
+  FilterChain.prototype.rebuild = function () {
+    this.stages = DSP.design(this.cfg);
+    const units = [];
+    for (let c = 0; c < this.nCh; c++) {
+      const perCh = [];
+      for (let s = 0; s < this.stages.length; s++) {
+        const secs = this.stages[s].sections.map(function (co) {
+          return new Biquad(co.b0, co.b1, co.b2, co.a1, co.a2);
+        });
+        perCh.push(secs);
+      }
+      units.push(perCh);
+    }
+    this.units = units;
+    this.groupDelay = this._estimateGroupDelay();
+  };
+  FilterChain.prototype.reset = function () {
+    for (let c = 0; c < this.units.length; c++)
+      for (let s = 0; s < this.units[c].length; s++)
+        for (let k = 0; k < this.units[c][s].length; k++) this.units[c][s][k].reset();
+  };
+  /** 逐样点滤波：x -> y */
+  FilterChain.prototype.process = function (ch, x) {
+    const perCh = this.units[ch];
+    if (!perCh) return x;
+    let y = x;
+    for (let s = 0; s < perCh.length; s++) {
+      const secs = perCh[s];
+      for (let k = 0; k < secs.length; k++) y = secs[k].process(y);
+    }
+    return y;
+  };
+  FilterChain.prototype.describe = function () {
+    return this.stages.map(function (s) { return s.name; });
+  };
+  /** 粗略估计群延迟（样点数），用于波形对齐显示 */
+  FilterChain.prototype._estimateGroupDelay = function () {
+    const fs = this.cfg.fs;
+    const resp = DSP.responseDb(this.stages, fs, 512);
+    // 找到 -3dB 通带中心附近的相位延迟近似：这里用相位斜率更准，但为简洁取经验值
+    let s = 0;
+    for (let i = 0; i < resp.length; i++) s += Math.max(0, resp[i].db + 3);
+    void s;
+    return 0;   // 显示时用互相关对齐更实用，见 UI
+  };
+  DSP.FilterChain = FilterChain;
+
+  /* --------------------------------------------------------------------- FFT */
+  /** 原地 radix-2 复数 FFT（长度必须是 2 的幂）。 */
+  DSP.fft = function (re, im) {
+    const n = re.length;
+    if (n <= 1) return;
+    // 位反转置换
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1;
+      for (; j & bit; bit >>= 1) j ^= bit;
+      j ^= bit;
+      if (i < j) {
+        let t = re[i]; re[i] = re[j]; re[j] = t;
+        t = im[i]; im[i] = im[j]; im[j] = t;
+      }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -2 * Math.PI / len;
+      const wr = Math.cos(ang), wi = Math.sin(ang);
+      const half = len >> 1;
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let j = 0; j < half; j++) {
+          const p = i + j, q = p + half;
+          const vr = re[q] * cr - im[q] * ci;
+          const vi = re[q] * ci + im[q] * cr;
+          re[q] = re[p] - vr; im[q] = im[p] - vi;
+          re[p] += vr; im[p] += vi;
+          const ncr = cr * wr - ci * wi;
+          ci = cr * wi + ci * wr;
+          cr = ncr;
+        }
+      }
+    }
+  };
+
+  DSP.nextPow2 = function (n) {
+    let p = 1;
+    while (p < n) p <<= 1;
+    return p;
+  };
+
+  DSP.hann = function (n) {
+    const w = new Float64Array(n);
+    for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
+    return w;
+  };
+
+  /** 去均值 */
+  DSP.detrend = function (x) {
+    let m = 0;
+    for (let i = 0; i < x.length; i++) m += x[i];
+    m /= (x.length || 1);
+    const out = new Float64Array(x.length);
+    for (let i = 0; i < x.length; i++) out[i] = x[i] - m;
+    return out;
+  };
+
+  /**
+   * Welch 平均功率谱密度，单位 µV²/Hz。
+   * @param signal 时域序列（µV）
+   * @param fs 采样率
+   * @param opts {nfft, overlap}
+   */
+  DSP.psd = function (signal, fs, opts) {
+    opts = opts || {};
+    const n = signal.length;
+    let nfft = opts.nfft || 0;
+    if (!nfft) nfft = Math.min(512, DSP.nextPow2(Math.max(64, n)));
+    if (nfft > DSP.nextPow2(n)) nfft = DSP.nextPow2(Math.max(64, n));
+    if (nfft < 4) nfft = 4;
+    nfft = DSP.nextPow2(nfft);
+
+    const w = DSP.hann(nfft);
+    let u = 0;
+    for (let i = 0; i < nfft; i++) u += w[i] * w[i];
+
+    const step = Math.max(1, Math.floor(nfft * (1 - (opts.overlap == null ? 0.5 : opts.overlap))));
+    const half = nfft / 2;
+    const acc = new Float64Array(half + 1);
+    let segs = 0;
+
+    for (let start = 0; start + nfft <= n; start += step) {
+      const re = new Float64Array(nfft), im = new Float64Array(nfft);
+      // 段内去均值，再去直流对低频段的影响
+      let m = 0;
+      for (let i = 0; i < nfft; i++) m += signal[start + i];
+      m /= nfft;
+      for (let i = 0; i < nfft; i++) re[i] = (signal[start + i] - m) * w[i];
+      DSP.fft(re, im);
+      for (let k = 0; k <= half; k++) {
+        let p = (re[k] * re[k] + im[k] * im[k]) / (fs * u);
+        if (k !== 0 && k !== half) p *= 2;      // 单边谱
+        acc[k] += p;
+      }
+      segs++;
+    }
+    if (segs === 0) {                                 // 数据比窗还短：补零后单段
+      const re = new Float64Array(nfft), im = new Float64Array(nfft);
+      for (let i = 0; i < n && i < nfft; i++) re[i] = (signal[i] - (signal[0] || 0)) * w[i];
+      DSP.fft(re, im);
+      for (let k = 0; k <= half; k++) {
+        let p = (re[k] * re[k] + im[k] * im[k]) / (fs * u);
+        if (k !== 0 && k !== half) p *= 2;
+        acc[k] = p;
+      }
+      segs = 1;
+    }
+    const psd = new Float64Array(half + 1);
+    for (let k = 0; k <= half; k++) psd[k] = acc[k] / segs;
+
+    const freq = new Float64Array(half + 1);
+    for (let k = 0; k <= half; k++) freq[k] = k * fs / nfft;
+    return { freq: freq, psd: psd, nfft: nfft, segments: segs, df: fs / nfft };
+  };
+
+  /** 单点 DFT（用于精确检验某个频率的能量，如工频残留） */
+  DSP.goertzel = function (signal, fs, f) {
+    let sr = 0, si = 0;
+    const n = signal.length, w = 2 * Math.PI * f / fs;
+    for (let i = 0; i < n; i++) {
+      sr += signal[i] * Math.cos(w * i);
+      si -= signal[i] * Math.sin(w * i);
+    }
+    return Math.sqrt(sr * sr + si * si) * 2 / n;   // 幅值（µV）
+  };
+
+})(window.EEG = window.EEG || {});
+
+/* ==================== 03-artifact.js ==================== */
+/* =============================================================================
+ *  03-artifact.js  —  ③ 去伪迹
+ *  两条互补的路线，都只依赖纯 JS：
+ *    A. 回归法：眨眼/眼动会以近似线性方式泄漏到各通道，用额区 AF7/AF8 作为
+ *       EOG 代理，对每个目标通道做最小二乘回归 y = β·ref，再从 y 中减去 β·ref。
+ *       优点：快、可解释（能看到 β 系数）；缺点：无法分离与脑信号相关的成分。
+ *    B. ICA（FastICA 不动点算法）：把 4 通道观测分解成统计独立的成分，
+ *       再按「峰度高 / 低频占比高 / 与眼电强相关 / 高频占比高(肌电)」判为伪迹并置零，
+ *       最后用最小二乘混合矩阵重构回通道空间。
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+  const A = NS.Artifacts = {};
+
+  /* ------------------------------------------------------------------ 小工具 */
+  A.mean = function (v) {
+    let s = 0;
+    for (let i = 0; i < v.length; i++) s += v[i];
+    return s / (v.length || 1);
+  };
+  A.std = function (v) {
+    const m = A.mean(v);
+    let s = 0;
+    for (let i = 0; i < v.length; i++) { const d = v[i] - m; s += d * d; }
+    return Math.sqrt(s / (v.length || 1));
+  };
+  A.corr = function (x, y) {
+    const n = Math.min(x.length, y.length);
+    if (n < 2) return 0;
+    const mx = A.mean(x.slice(0, n)), my = A.mean(y.slice(0, n));
+    let num = 0, dx = 0, dy = 0;
+    for (let i = 0; i < n; i++) {
+      const a = x[i] - mx, b = y[i] - my;
+      num += a * b; dx += a * a; dy += b * b;
+    }
+    const d = Math.sqrt(dx * dy);
+    return d > 1e-12 ? num / d : 0;
+  };
+  /** Pearson 峰度（正态分布 ≈ 3，眨眼尖峰成分通常远大于 3） */
+  A.kurtosis = function (v) {
+    const n = v.length || 1;
+    const m = A.mean(v);
+    let m2 = 0, m4 = 0;
+    for (let i = 0; i < n; i++) {
+      const d = v[i] - m;
+      m2 += d * d; m4 += d * d * d * d;
+    }
+    m2 /= n; m4 /= n;
+    return m2 > 1e-12 ? m4 / (m2 * m2) : 3;
+  };
+
+  /** 对称矩阵 Jacobi 特征分解（通道数很少，足够快且数值稳定） */
+  A.jacobiEigen = function (Ain, n) {
+    const a = Ain.map(function (r) { return r.slice(); });
+    const v = [];
+    for (let i = 0; i < n; i++) {
+      v.push(new Array(n).fill(0));
+      v[i][i] = 1;
+    }
+    for (let sweep = 0; sweep < 60; sweep++) {
+      let off = 0;
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) off += a[i][j] * a[i][j];
+      if (off < 1e-16) break;
+      for (let p = 0; p < n; p++) {
+        for (let q = p + 1; q < n; q++) {
+          if (Math.abs(a[p][q]) < 1e-18) continue;
+          const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+          const t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+          const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+          for (let k = 0; k < n; k++) {
+            const akp = a[k][p], akq = a[k][q];
+            a[k][p] = c * akp - s * akq;
+            a[k][q] = s * akp + c * akq;
+          }
+          for (let k = 0; k < n; k++) {
+            const apk = a[p][k], aqk = a[q][k];
+            a[p][k] = c * apk - s * aqk;
+            a[q][k] = s * apk + c * aqk;
+          }
+          for (let k = 0; k < n; k++) {
+            const vkp = v[k][p], vkq = v[k][q];
+            v[k][p] = c * vkp - s * vkq;
+            v[k][q] = s * vkp + c * vkq;
+          }
+        }
+      }
+    }
+    return { values: a.map(function (r, i) { return r[i]; }), vectors: v };
+  };
+
+  /** 高斯-约当求逆（带对角正则，避免奇异） */
+  A.inverse = function (M, n, lambda) {
+    lambda = lambda || 0;
+    const a = [];
+    for (let i = 0; i < n; i++) {
+      a.push(new Array(2 * n).fill(0));
+      for (let j = 0; j < n; j++) a[i][j] = M[i][j] + (i === j ? lambda : 0);
+      a[i][n + i] = 1;
+    }
+    for (let col = 0; col < n; col++) {
+      let piv = col;
+      for (let r = col + 1; r < n; r++) if (Math.abs(a[r][col]) > Math.abs(a[piv][col])) piv = r;
+      if (Math.abs(a[piv][col]) < 1e-14) { a[col][col] += 1e-9; piv = col; }
+      const tmp = a[col]; a[col] = a[piv]; a[piv] = tmp;
+      const d = a[col][col];
+      for (let j = 0; j < 2 * n; j++) a[col][j] /= d;
+      for (let r = 0; r < n; r++) {
+        if (r === col) continue;
+        const f = a[r][col];
+        if (f === 0) continue;
+        for (let j = 0; j < 2 * n; j++) a[r][j] -= f * a[col][j];
+      }
+    }
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(a[i].slice(n));
+    return out;
+  };
+
+  /* ------------------------------------------------------- A. 回归法去眼电 */
+  /**
+   * @param chans 4×N 通道数据
+   * @param refIdx 眼电代理通道（默认 AF7=1, AF8=2）
+   * @returns {{cleaned:number[][], betas:number[], r2:number[]}}
+   */
+  A.removeEOGByRegression = function (chans, refIdx, opts) {
+    opts = opts || {};
+    const shrink = opts.shrink == null ? 0.95 : opts.shrink;
+    refIdx = refIdx || [1, 2];
+    const nCh = chans.length, n = chans[0].length;
+    const cleaned = chans.map(function (c) { return c.slice(); });
+    const betas = new Array(nCh).fill(0);
+    const r2s = new Array(nCh).fill(0);
+
+    // 以参考通道为中心构造设计矩阵 X = [ref1, ref2]
+    const X = refIdx.map(function (r, k) {
+      const m = A.mean(chans[r]);
+      const col = new Array(n);
+      for (let i = 0; i < n; i++) col[i] = chans[r][i] - m;
+      void k;
+      return col;
+    });
+    const p = X.length;
+    const G = [];
+    for (let i = 0; i < p; i++) {
+      G.push(new Array(p).fill(0));
+      for (let j = 0; j < p; j++) {
+        let s = 0;
+        for (let t = 0; t < n; t++) s += X[i][t] * X[j][t];
+        G[i][j] = s / (n - 1);
+      }
+    }
+    let tr = 0;
+    for (let i = 0; i < p; i++) tr += G[i][i];
+    const Gi = A.inverse(G, p, 1e-6 * Math.max(tr, 1e-9));
+
+    for (let c = 0; c < nCh; c++) {
+      if (refIdx.indexOf(c) >= 0) continue;         // 参考通道自身不动
+      const my = A.mean(chans[c]);
+      const y = new Array(n);
+      for (let i = 0; i < n; i++) y[i] = chans[c][i] - my;
+      // β = (XᵀX)⁻¹ Xᵀy
+      const rhs = new Array(p).fill(0);
+      for (let i = 0; i < p; i++) {
+        let s = 0;
+        for (let t = 0; t < n; t++) s += X[i][t] * y[t];
+        rhs[i] = s / (n - 1);
+      }
+      const beta = new Array(p).fill(0);
+      for (let i = 0; i < p; i++) {
+        let s = 0;
+        for (let j = 0; j < p; j++) s += Gi[i][j] * rhs[j];
+        beta[i] = s;
+      }
+      // 预测并减除
+      let ssRes = 0, ssTot = 0;
+      for (let t = 0; t < n; t++) {
+        let pred = 0;
+        for (let i = 0; i < p; i++) pred += beta[i] * X[i][t];
+        cleaned[c][t] = chans[c][t] - shrink * pred;
+        ssRes += (y[t] - pred) * (y[t] - pred);
+        ssTot += y[t] * y[t];
+      }
+      let bn = 0;
+      for (let i = 0; i < p; i++) bn += beta[i] * beta[i];
+      betas[c] = Math.sqrt(bn);                       // 泄漏系数的模长，便于展示
+      r2s[c] = ssTot > 1e-12 ? 1 - ssRes / ssTot : 0; // 解释率
+    }
+    return { cleaned: cleaned, betas: betas, r2: r2s };
+  };
+
+  /* ------------------------------------------------ B. FastICA + 伪迹成分剔除 */
+  /**
+   * @param chans 4×N（建议先做带通/陷波）
+   * @param fs 采样率
+   * @param opts {kurtThreshold, lowThreshold, highThreshold, eogRef, maxIter}
+   */
+  A.fastICA = function (chans, fs, opts) {
+    opts = opts || {};
+    const kurtThreshold = opts.kurtThreshold == null ? 6 : opts.kurtThreshold;
+    const lowThreshold = opts.lowThreshold == null ? 0.60 : opts.lowThreshold;
+    const highThreshold = opts.highThreshold == null ? 0.55 : opts.highThreshold;
+    const maxIter = opts.maxIter || 200;
+    const nCh = chans.length, n = chans[0].length;
+
+    // ---- 1. 中心化 ----
+    const means = chans.map(A.mean);
+    const X = chans.map(function (c, i) {
+      const out = new Array(n);
+      for (let t = 0; t < n; t++) out[t] = c[t] - means[i];
+      return out;
+    });
+
+    // ---- 2. 白化：特征分解协方差，Z = D^(-1/2)Eᵀ·X，使 cov(Z)=I ----
+    const C = [];
+    for (let i = 0; i < nCh; i++) {
+      C.push(new Array(nCh).fill(0));
+      for (let j = 0; j < nCh; j++) {
+        let s = 0;
+        for (let t = 0; t < n; t++) s += X[i][t] * X[j][t];
+        C[i][j] = s / Math.max(1, n - 1) + (i === j ? 1e-9 : 0);
+      }
+    }
+    const eig = A.jacobiEigen(C, nCh);
+    const vals = eig.values.slice(), vecs = eig.vectors;
+    // 单调排列，方便展示"主成分能量占比"
+    const order = vals.map(function (v, i) { return i; }).sort(function (a, b) { return vals[b] - vals[a]; });
+    const K = [];
+    for (let i = 0; i < nCh; i++) K.push(new Array(nCh).fill(0));
+    order.forEach(function (oi, rank) {
+      const lam = Math.max(vals[oi], 1e-12);
+      const scale = 1 / Math.sqrt(lam);
+      for (let k = 0; k < nCh; k++) K[rank][k] = vecs[k][oi] * scale;
+    });
+    const Z = [];
+    for (let i = 0; i < nCh; i++) {
+      const row = new Array(n).fill(0);
+      for (let k = 0; k < nCh; k++) {
+        const kk = K[i][k];
+        if (kk === 0) continue;
+        const xk = X[k];
+        for (let t = 0; t < n; t++) row[t] += kk * xk[t];
+      }
+      Z.push(row);
+    }
+
+    // ---- 3. FastICA 不动点迭代（deflation，g = tanh）----
+    const rng = NS.makeRng(12345);
+    const W = [];
+    for (let comp = 0; comp < nCh; comp++) {
+      let w = new Array(nCh);
+      for (let i = 0; i < nCh; i++) w[i] = rng() * 2 - 1;
+      deflate(w, W);
+      norm(w);
+      for (let iter = 0; iter < maxIter; iter++) {
+        const u = new Array(n);
+        for (let t = 0; t < n; t++) {
+          let s = 0;
+          for (let c = 0; c < nCh; c++) s += w[c] * Z[c][t];
+          u[t] = s;
+        }
+        let gPrimeMean = 0;
+        const g = new Array(n);
+        for (let t = 0; t < n; t++) {
+          const th = Math.tanh(u[t]);
+          g[t] = th;
+          gPrimeMean += 1 - th * th;
+        }
+        gPrimeMean /= n;
+        const wNew = new Array(nCh).fill(0);
+        for (let c = 0; c < nCh; c++) {
+          let s = 0;
+          const zc = Z[c];
+          for (let t = 0; t < n; t++) s += zc[t] * g[t];
+          wNew[c] = s / n - gPrimeMean * w[c];
+        }
+        deflate(wNew, W);
+        norm(wNew);
+        let dot = 0;
+        for (let c = 0; c < nCh; c++) dot += wNew[c] * w[c];
+        w = wNew;
+        if (Math.abs(Math.abs(dot) - 1) < 1e-7) break;
+      }
+      W.push(w);
+    }
+
+    // ---- 4. 成分与指标 ----
+    const S = [];
+    for (let i = 0; i < nCh; i++) {
+      const row = new Array(n).fill(0);
+      for (let c = 0; c < nCh; c++) {
+        const wc = W[i][c];
+        if (wc === 0) continue;
+        const zc = Z[c];
+        for (let t = 0; t < n; t++) row[t] += wc * zc[t];
+      }
+      S.push(row);
+    }
+
+    // 眼电代理：原始 AF7/AF8 之差与和
+    const eog = new Array(n);
+    const refA = chans[1], refB = chans[2];
+    for (let t = 0; t < n; t++) eog[t] = 0.5 * (refA[t] + refB[t]);
+
+    const info = [];
+    for (let i = 0; i < nCh; i++) {
+      const s = S[i];
+      const kurt = A.kurtosis(s);
+      const psd = NS.DSP.psd(s, fs, { nfft: Math.min(256, NS.DSP.nextPow2(n)), overlap: 0.5 });
+      let lowE = 0, highE = 0, totE = 0;
+      for (let k = 0; k < psd.freq.length; k++) {
+        const f = psd.freq[k], p = psd.psd[k];
+        if (f < 0.5 || f > 45) continue;
+        totE += p;
+        if (f < 5) lowE += p;
+        if (f > 20) highE += p;
+      }
+      const lowRatio = totE > 1e-12 ? lowE / totE : 0;
+      const highRatio = totE > 1e-12 ? highE / totE : 0;
+      const eogCorr = A.corr(s, eog);
+      let artifact = false, reason = '';
+      if (kurt > kurtThreshold) { artifact = true; reason = '峰度 ' + kurt.toFixed(1) + '（眨眼尖峰）'; }
+      else if (lowRatio > lowThreshold && Math.abs(eogCorr) > 0.35) { artifact = true; reason = '低频为主 + 眼电相关 r=' + eogCorr.toFixed(2); }
+      else if (highRatio > highThreshold && kurt > 4) { artifact = true; reason = '高频占比 ' + (highRatio * 100).toFixed(0) + '%（肌电）'; }
+      info.push({
+        index: i, kurtosis: kurt, lowRatio: lowRatio, highRatio: highRatio,
+        eogCorr: eogCorr, artifact: artifact, reason: reason
+      });
+    }
+
+    // 安全阀：至少保留 2 个成分，避免把脑信号也一并抹掉
+    const flagged = info.filter(function (d) { return d.artifact; });
+    if (flagged.length > nCh - 2) {
+      flagged.sort(function (a, b) { return b.kurtosis - a.kurtosis; });
+      for (let i = nCh - 2; i < flagged.length; i++) {
+        flagged[i].artifact = false;
+        flagged[i].reason = '保留（安全阀：伪迹成分过多）';
+      }
+    }
+
+    // ---- 5. 重构：A = X·Sᵀ(SSᵀ)⁻¹（最小二乘混合矩阵），X̂ = A·S_masked ----
+    const Ahat = [];
+    for (let i = 0; i < nCh; i++) Ahat.push(new Array(nCh).fill(0));
+    const XST = [];
+    for (let i = 0; i < nCh; i++) {
+      XST.push(new Array(nCh).fill(0));
+      for (let j = 0; j < nCh; j++) {
+        let s = 0;
+        const xi = X[i], sj = S[j];
+        for (let t = 0; t < n; t++) s += xi[t] * sj[t];
+        XST[i][j] = s / n;
+      }
+    }
+    const SST = [];
+    for (let i = 0; i < nCh; i++) {
+      SST.push(new Array(nCh).fill(0));
+      for (let j = 0; j < nCh; j++) {
+        let s = 0;
+        const si = S[i], sj = S[j];
+        for (let t = 0; t < n; t++) s += si[t] * sj[t];
+        SST[i][j] = s / n;
+      }
+    }
+    const SSTi = A.inverse(SST, nCh, 1e-9);
+    for (let i = 0; i < nCh; i++) {
+      for (let j = 0; j < nCh; j++) {
+        let s = 0;
+        for (let k = 0; k < nCh; k++) s += XST[i][k] * SSTi[k][j];
+        Ahat[i][j] = s;
+      }
+    }
+    const cleaned = [];
+    for (let c = 0; c < nCh; c++) {
+      const out = new Array(n);
+      for (let t = 0; t < n; t++) out[t] = means[c];
+      for (let j = 0; j < nCh; j++) {
+        if (info[j].artifact) continue;                 // 伪迹成分不参与重建
+        const ac = Ahat[c][j];
+        if (ac === 0) continue;
+        const sj = S[j];
+        for (let t = 0; t < n; t++) out[t] += ac * sj[t];
+      }
+      cleaned.push(out);
+    }
+
+    return { cleaned: cleaned, components: info, nRemoved: info.filter(function (d) { return d.artifact; }).length };
+  };
+
+  function deflate(w, W) {
+    for (let i = 0; i < W.length; i++) {
+      let dot = 0;
+      for (let c = 0; c < w.length; c++) dot += w[c] * W[i][c];
+      for (let c = 0; c < w.length; c++) w[c] -= dot * W[i][c];
+    }
+  }
+  function norm(w) {
+    let s = 0;
+    for (let i = 0; i < w.length; i++) s += w[i] * w[i];
+    s = Math.sqrt(s) || 1;
+    for (let i = 0; i < w.length; i++) w[i] /= s;
+  }
+
+  /* --------------------------------------------------- 组合：完整去伪迹一步 */
+  /**
+   * @returns {{cleaned:number[][], report:{regression:Object|null, ica:Object|null}}}
+   */
+  A.removeArtifacts = function (chans, fs, opts) {
+    opts = opts || {};
+    let cur = chans;
+    let reg = null, ica = null;
+    if (opts.regression && opts.regression.enabled) {
+      reg = A.removeEOGByRegression(cur, opts.regression.refs, opts.regression);
+      cur = reg.cleaned;
+    }
+    if (opts.ica && opts.ica.enabled) {
+      ica = A.fastICA(cur, fs, opts.ica);
+      cur = ica.cleaned;
+    }
+    return { cleaned: cur, report: { regression: reg, ica: ica } };
+  };
+
+})(window.EEG = window.EEG || {});
+
+/* ==================== 04-features.js ==================== */
+/* =============================================================================
+ *  04-features.js  —  ③ 特征提取
+ *  Welch 功率谱 → 频带积分 → 可判别特征：
+ *    · 绝对/相对频带功率  δ(1-4) θ(4-8) α(8-13) β(13-30) γ(30-45)
+ *    · α/β 比值（经典的「专注/放松」指标）
+ *    · 谱熵（功率谱的香农熵，越低越"节律化"）
+ *    · Hjorth 参数 activity / mobility / complexity（时域复杂度）
+ *    · 峰值频率
+ *  产出的特征向量可直接喂给 05-classifier.js。
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+  const F = NS.Features = {};
+
+  F.BANDS = [
+    { key: 'delta', symbol: 'δ', lo: 1, hi: 4 },
+    { key: 'theta', symbol: 'θ', lo: 4, hi: 8 },
+    { key: 'alpha', symbol: 'α', lo: 8, hi: 13 },
+    { key: 'beta', symbol: 'β', lo: 13, hi: 30 },
+    { key: 'gamma', symbol: 'γ', lo: 30, hi: 45 }
+  ];
+
+  function variance(x) {
+    const n = x.length || 1;
+    let m = 0;
+    for (let i = 0; i < n; i++) m += x[i];
+    m /= n;
+    let s = 0;
+    for (let i = 0; i < n; i++) { const d = x[i] - m; s += d * d; }
+    return s / n;
+  }
+
+  function bandPower(psd, freq, df, lo, hi) {
+    let e = 0;
+    for (let i = 0; i < freq.length; i++) {
+      const f = freq[i];
+      if (f >= lo && f < hi) e += psd[i] * df;
+    }
+    return e;
+  }
+
+  function spectralEntropy(psd, freq, lo, hi) {
+    let tot = 0;
+    const idxs = [];
+    for (let i = 0; i < freq.length; i++) {
+      const f = freq[i];
+      if (f >= lo && f < hi) { idxs.push(i); tot += psd[i]; }
+    }
+    if (tot <= 1e-15 || idxs.length < 2) return 0;
+    let h = 0;
+    for (let k = 0; k < idxs.length; k++) {
+      const q = Math.max(psd[idxs[k]], 1e-15) / tot;
+      h -= q * Math.log(q);
+    }
+    return h / Math.log(idxs.length);            // 归一化到 [0,1]
+  }
+
+  function hjorth(x) {
+    const n = x.length;
+    if (n < 4) return { activity: 0, mobility: 0, complexity: 0 };
+    const v0 = variance(x);
+    const d1 = new Array(n - 1), d2 = new Array(n - 2);
+    for (let i = 0; i < n - 1; i++) d1[i] = x[i + 1] - x[i];
+    for (let i = 0; i < n - 2; i++) d2[i] = d1[i + 1] - d1[i];
+    const v1 = variance(d1), v2 = variance(d2);
+    const mob = v0 > 1e-15 ? Math.sqrt(v1 / v0) : 0;
+    const mob1 = v1 > 1e-15 ? Math.sqrt(v2 / v1) : 0;
+    return {
+      activity: v0,
+      mobility: mob,
+      complexity: mob > 1e-15 ? mob1 / mob : 0
+    };
+  }
+
+  function peakFrequency(psd, freq, lo, hi) {
+    let best = -1, bestF = 0;
+    for (let i = 0; i < freq.length; i++) {
+      const f = freq[i];
+      if (f < lo || f > hi) continue;
+      if (psd[i] > best) { best = psd[i]; bestF = f; }
+    }
+    return bestF;
+  }
+
+  /**
+   * 计算一个时间窗的全部特征。
+   * @param chans 4×N（应当是去伪迹之后的信号）
+   * @param fs 采样率
+   * @param opts {nfft, overlap, featSet}
+   */
+  F.compute = function (chans, fs, opts) {
+    opts = opts || {};
+    const nCh = chans.length;
+    const perChannel = [];
+    let sumFreq = null, sumPsd = null, nSeg = 0;
+
+    for (let c = 0; c < nCh; c++) {
+      const sig = chans[c];
+      const r = NS.DSP.psd(sig, fs, { nfft: opts.nfft || 0, overlap: opts.overlap == null ? 0.5 : opts.overlap });
+      const bp = {}, rel = {};
+      let total = 0;
+      for (let b = 0; b < F.BANDS.length; b++) {
+        const bd = F.BANDS[b];
+        const e = bandPower(r.psd, r.freq, r.df, bd.lo, bd.hi);
+        bp[bd.key] = e;
+        total += e;
+      }
+      for (let b = 0; b < F.BANDS.length; b++) {
+        const k = F.BANDS[b].key;
+        rel[k] = total > 1e-12 ? bp[k] / total : 0;
+      }
+      const ab = bp.beta > 1e-12 ? bp.alpha / bp.beta : 0;
+      const ent = spectralEntropy(r.psd, r.freq, 1, 45);
+      const hj = hjorth(sig);
+      const pf = peakFrequency(r.psd, r.freq, 1, 45);
+
+      perChannel.push({
+        band: bp, relative: rel, total: total, alphaBeta: ab,
+        entropy: ent, hjorth: hj, peakFreq: pf,
+        psd: r.psd, freq: r.freq
+      });
+
+      if (!sumFreq) { sumFreq = r.freq; sumPsd = new Float64Array(r.psd.length); }
+      for (let i = 0; i < r.psd.length && i < sumPsd.length; i++) sumPsd[i] += r.psd[i];
+      nSeg++;
+    }
+    if (nSeg > 0) for (let i = 0; i < sumPsd.length; i++) sumPsd[i] /= nSeg;
+
+    const meanRelative = {};
+    for (let b = 0; b < F.BANDS.length; b++) {
+      const k = F.BANDS[b].key;
+      let s = 0;
+      for (let c = 0; c < nCh; c++) s += perChannel[c].relative[k];
+      meanRelative[k] = s / nCh;
+    }
+    let mAB = 0, mEnt = 0;
+    for (let c = 0; c < nCh; c++) { mAB += perChannel[c].alphaBeta; mEnt += perChannel[c].entropy; }
+    mAB /= nCh; mEnt /= nCh;
+
+    const packed = F.buildVector(perChannel, mAB, mEnt, opts.featSet || 'all');
+
+    return {
+      fs: fs,
+      perChannel: perChannel,
+      meanRelative: meanRelative,
+      meanAlphaBeta: mAB,
+      meanEntropy: mEnt,
+      psd: { freq: sumFreq, psd: sumPsd },
+      vector: packed.vector,
+      names: packed.names,
+      dim: packed.vector.length
+    };
+  };
+
+  /**
+   * 组装分类器输入的特征向量。
+   *  all   : 4 通道×5 相对功率 + 4 通道 α/β + 4 通道谱熵 = 28 维
+   *  bands : 4 通道×5 相对功率 = 20 维
+   *  ab    : 4 通道 α/β = 4 维（最稳，样本少时推荐）
+   */
+  F.buildVector = function (perChannel, meanAB, meanEnt, featSet) {
+    const v = [], names = [];
+    const ch = NS.CHANNELS;
+    if (featSet === 'ab') {
+      for (let c = 0; c < perChannel.length; c++) {
+        v.push(perChannel[c].alphaBeta);
+        names.push(ch[c] + ' α/β');
+      }
+      v.push(meanAB); names.push('平均 α/β');
+      return { vector: v, names: names };
+    }
+    for (let c = 0; c < perChannel.length; c++) {
+      for (let b = 0; b < F.BANDS.length; b++) {
+        const k = F.BANDS[b].key;
+        v.push(perChannel[c].relative[k]);
+        names.push(ch[c] + ' ' + F.BANDS[b].symbol + ' rel');
+      }
+    }
+    if (featSet === 'bands') return { vector: v, names: names };
+
+    for (let c = 0; c < perChannel.length; c++) {
+      v.push(perChannel[c].alphaBeta);
+      names.push(ch[c] + ' α/β');
+    }
+    for (let c = 0; c < perChannel.length; c++) {
+      v.push(perChannel[c].entropy);
+      names.push(ch[c] + ' 谱熵');
+    }
+    v.push(meanEnt); names.push('平均谱熵');
+    return { vector: v, names: names };
+  };
+
+  /** 供 UI 生成摘要文本 */
+  F.summarize = function (feat) {
+    const mr = feat.meanRelative;
+    return 'δ' + (mr.delta * 100).toFixed(0) + '% θ' + (mr.theta * 100).toFixed(0) +
+      '% α' + (mr.alpha * 100).toFixed(0) + '% β' + (mr.beta * 100).toFixed(0) +
+      '% γ' + (mr.gamma * 100).toFixed(0) + '% | α/β=' + feat.meanAlphaBeta.toFixed(2) +
+      ' | 熵=' + feat.meanEntropy.toFixed(2);
+  };
+
+})(window.EEG = window.EEG || {});
+
+/* ==================== 05-classifier.js ==================== */
+/* =============================================================================
+ *  05-classifier.js  —  ④ 分类
+ *  三种从零实现的小模型（二分类：0 = 睁眼/基线，1 = 闭眼/目标状态）：
+ *    · LDA        线性判别分析（闭式解 + 协方差正则，小样本首选）
+ *    · LinearSVM  Pegasos 随机次梯度 + hinge loss + L2
+ *    · MLP        1 隐藏层 tanh + sigmoid，全批量反向传播
+ *  统一封装：z-score 标准化 → PCA 降维（防小样本过拟合）→ 分类器
+ *  评估：训练准确率 + 留一法(LOO)交叉验证准确率
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+  const ML = NS.ML = {};
+
+  /* ------------------------------------------------------------------ 标准化 */
+  function Scaler() { this.mean = null; this.std = null; }
+  Scaler.prototype.fit = function (X) {
+    const n = X.length, d = X[0].length;
+    this.mean = new Array(d).fill(0);
+    this.std = new Array(d).fill(1);
+    for (let j = 0; j < d; j++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += X[i][j];
+      s /= n;
+      let v = 0;
+      for (let i = 0; i < n; i++) { const dd = X[i][j] - s; v += dd * dd; }
+      v /= Math.max(1, n - 1);
+      this.mean[j] = s;
+      this.std[j] = Math.sqrt(v) || 1;
+    }
+    return this;
+  };
+  Scaler.prototype.transform = function (x) {
+    const out = new Array(x.length);
+    for (let j = 0; j < x.length; j++) out[j] = (x[j] - this.mean[j]) / this.std[j];
+    return out;
+  };
+  Scaler.prototype.transformAll = function (X) { return X.map(this.transform, this); };
+  ML.Scaler = Scaler;
+
+  /* ------------------------------------------------------------ PCA 降维 */
+  /** 防止特征维度 >> 样本数时分类器直接退化。 */
+  function PCA(maxComp, varRatio) {
+    this.maxComp = maxComp || 8;
+    this.varRatio = varRatio == null ? 0.95 : varRatio;
+    this.components = null;
+    this.explained = null;
+  }
+  PCA.prototype.fit = function (X) {
+    const n = X.length, d = X[0].length;
+    const C = [];
+    for (let i = 0; i < d; i++) C.push(new Array(d).fill(0));
+    for (let k = 0; k < n; k++) {
+      const x = X[k];
+      for (let i = 0; i < d; i++) for (let j = i; j < d; j++) C[i][j] += x[i] * x[j];
+    }
+    for (let i = 0; i < d; i++) for (let j = i; j < d; j++) { C[i][j] /= Math.max(1, n - 1); C[j][i] = C[i][j]; }
+
+    const eig = NS.Artifacts.jacobiEigen(C, d);
+    const order = eig.values.map(function (v, i) { return i; })
+      .sort(function (a, b) { return eig.values[b] - eig.values[a]; });
+    const totalVar = eig.values.reduce(function (a, b) { return a + Math.max(b, 0); }, 0) || 1;
+    let acc = 0, k = 0;
+    const kept = [];
+    for (let i = 0; i < order.length; i++) {
+      const oi = order[i];
+      if (eig.values[oi] <= 1e-12) continue;
+      acc += eig.values[oi];
+      kept.push(oi);
+      k++;
+      if ((acc / totalVar >= this.varRatio && k >= 1) || k >= Math.min(this.maxComp, n - 1)) break;
+    }
+    if (kept.length === 0) kept.push(order[0]);
+    this.components = kept.map(function (oi) {
+      return eig.vectors.map(function (rowk) { return rowk[oi]; });   // 第 oi 个特征向量
+    });
+    this.explained = acc / totalVar;
+    return this;
+  };
+  PCA.prototype.transform = function (x) {
+    const comps = this.components;
+    const out = new Array(comps.length);
+    for (let i = 0; i < comps.length; i++) {
+      let s = 0;
+      const c = comps[i];
+      for (let j = 0; j < x.length; j++) s += c[j] * x[j];
+      out[i] = s;
+    }
+    return out;
+  };
+  PCA.prototype.transformAll = function (X) { return X.map(this.transform, this); };
+  ML.PCA = PCA;
+
+  /* ------------------------------------------------------------------ 工具 */
+  function meanVec(X) {
+    const d = X[0].length, m = new Array(d).fill(0);
+    for (let i = 0; i < X.length; i++) for (let j = 0; j < d; j++) m[j] += X[i][j];
+    for (let j = 0; j < d; j++) m[j] /= X.length;
+    return m;
+  }
+  function dot(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+  function sigmoid(z) { return 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, z)))); }
+
+  /* -------------------------------------------------------------------- LDA */
+  function LDA(lambda) { this.lambda = lambda == null ? 0.05 : lambda; this.w = null; this.b = 0; this.scale = 1; }
+  LDA.prototype.fit = function (X, y) {
+    const n = X.length, d = X[0].length;
+    const c0 = X.filter(function (_, i) { return y[i] === 0; });
+    const c1 = X.filter(function (_, i) { return y[i] === 1; });
+    if (!c0.length || !c1.length) throw new Error('LDA 需要两个类别都有样本');
+    const m0 = meanVec(c0), m1 = meanVec(c1);
+
+    // 池化协方差 Σ
+    const S = [];
+    for (let i = 0; i < d; i++) S.push(new Array(d).fill(0));
+    const acc = function (set, m) {
+      for (let k = 0; k < set.length; k++) {
+        const x = set[k];
+        for (let i = 0; i < d; i++) {
+          const di = x[i] - m[i];
+          for (let j = i; j < d; j++) {
+            const v = di * (x[j] - m[j]);
+            S[i][j] += v; S[j][i] += v;
+          }
+        }
+      }
+    };
+    acc(c0, m0); acc(c1, m1);
+    let tr = 0;
+    for (let i = 0; i < d; i++) tr += S[i][i];
+    const scale = tr / d || 1;
+    for (let i = 0; i < d; i++) for (let j = 0; j < d; j++) S[i][j] /= Math.max(1, n - 2);
+    const Si = NS.Artifacts.inverse(S, d, this.lambda * scale + 1e-9);
+
+    const diff = new Array(d);
+    for (let i = 0; i < d; i++) diff[i] = m1[i] - m0[i];
+    this.w = new Array(d).fill(0);
+    for (let i = 0; i < d; i++) {
+      let s = 0;
+      for (let j = 0; j < d; j++) s += Si[i][j] * diff[j];
+      this.w[i] = s;
+    }
+    const mid = new Array(d);
+    for (let i = 0; i < d; i++) mid[i] = 0.5 * (m0[i] + m1[i]);
+    this.b = -dot(this.w, mid) + Math.log((c1.length + 1) / (c0.length + 1));
+
+    // 用于把决策函数值映射成可信概率
+    const scores = X.map(function (x) { return dot(this.w, x) + this.b; }, this);
+    const ms = scores.reduce(function (a, b) { return a + b; }, 0) / scores.length;
+    let vs = 0;
+    scores.forEach(function (s) { const t = s - ms; vs += t * t; });
+    this.scale = Math.sqrt(vs / scores.length) || 1;
+    return this;
+  };
+  LDA.prototype.score = function (x) { return dot(this.w, x) + this.b; };
+  LDA.prototype.predict = function (x) { return this.score(x) >= 0 ? 1 : 0; };
+  LDA.prototype.proba = function (x) { return sigmoid(this.score(x) / this.scale); };
+  ML.LDA = LDA;
+
+  /* --------------------------------------------------------------- 线性 SVM */
+  function LinearSVM(opts) {
+    opts = opts || {};
+    this.lambda = opts.lambda == null ? 0.01 : opts.lambda;
+    this.epochs = opts.epochs || 120;
+    this.w = null; this.b = 0; this.scale = 1;
+  }
+  LinearSVM.prototype.fit = function (X, y) {
+    const n = X.length, d = X[0].length;
+    const rng = NS.makeRng(99);
+    const yn = y.map(function (v) { return v === 1 ? 1 : -1; });
+    this.w = new Array(d).fill(0);
+    this.b = 0;
+    const idx = X.map(function (_, i) { return i; });
+    for (let t = 1; t <= this.epochs; t++) {
+      // 洗牌
+      for (let i = idx.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        const tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp;
+      }
+      for (let k = 0; k < n; k++) {
+        const i = idx[k];
+        const eta = 1 / (this.lambda * (t * n + k + 1));
+        const margin = yn[i] * (dot(this.w, X[i]) + this.b);
+        if (margin < 1) {
+          for (let j = 0; j < d; j++) this.w[j] = (1 - eta * this.lambda) * this.w[j] + eta * yn[i] * X[i][j];
+          this.b += eta * yn[i] * 1.0;
+        } else {
+          for (let j = 0; j < d; j++) this.w[j] = (1 - eta * this.lambda) * this.w[j];
+        }
+      }
+    }
+    const scores = X.map(function (x) { return dot(this.w, x) + this.b; }, this);
+    const ms = scores.reduce(function (a, b2) { return a + b2; }, 0) / scores.length;
+    let vs = 0;
+    scores.forEach(function (s) { const q = s - ms; vs += q * q; });
+    this.scale = Math.sqrt(vs / scores.length) || 1;
+    return this;
+  };
+  LinearSVM.prototype.score = function (x) { return dot(this.w, x) + this.b; };
+  LinearSVM.prototype.predict = function (x) { return this.score(x) >= 0 ? 1 : 0; };
+  LinearSVM.prototype.proba = function (x) { return sigmoid(this.score(x) / this.scale); };
+  ML.LinearSVM = LinearSVM;
+
+  /* -------------------------------------------------------------------- MLP */
+  function MLP(opts) {
+    opts = opts || {};
+    this.hidden = opts.hidden || 8;
+    this.epochs = opts.epochs || 600;
+    this.lr = opts.lr || 0.08;
+    this.l2 = opts.l2 == null ? 1e-4 : opts.l2;
+    this.seed = opts.seed || 7;
+    this.W1 = null; this.b1 = null; this.W2 = null; this.b2 = 0;
+  }
+  MLP.prototype.fit = function (X, y) {
+    const n = X.length, d = X[0].length, h = this.hidden;
+    const rng = NS.makeRng(this.seed);
+    const init = function (fanIn) { return (rng() * 2 - 1) * Math.sqrt(2 / fanIn); };
+
+    this.W1 = [];
+    for (let i = 0; i < h; i++) {
+      const row = new Array(d);
+      for (let j = 0; j < d; j++) row[j] = init(d);
+      this.W1.push(row);
+    }
+    this.b1 = new Array(h).fill(0);
+    this.W2 = new Array(h);
+    for (let i = 0; i < h; i++) this.W2[i] = init(h);
+    this.b2 = 0;
+
+    for (let ep = 0; ep < this.epochs; ep++) {
+      const gW1 = [], gb1 = new Array(h).fill(0), gW2 = new Array(h).fill(0);
+      for (let i = 0; i < h; i++) gW1.push(new Array(d).fill(0));
+      let gb2 = 0;
+
+      for (let k = 0; k < n; k++) {
+        const x = X[k], target = y[k];
+        // 前向
+        const a = new Array(h);
+        for (let i = 0; i < h; i++) {
+          let s = this.b1[i];
+          const row = this.W1[i];
+          for (let j = 0; j < d; j++) s += row[j] * x[j];
+          a[i] = Math.tanh(s);
+        }
+        let z = this.b2;
+        for (let i = 0; i < h; i++) z += this.W2[i] * a[i];
+        const p = sigmoid(z);
+        const dz = (p - target);                       // BCE + sigmoid 的梯度
+        // 反向
+        gb2 += dz;
+        for (let i = 0; i < h; i++) {
+          gW2[i] += dz * a[i];
+          const da = dz * this.W2[i] * (1 - a[i] * a[i]);   // tanh'
+          gb1[i] += da;
+          const grow = gW1[i], row = this.W1[i];
+          for (let j = 0; j < d; j++) grow[j] += da * x[j];
+          void row;
+        }
+      }
+      // 更新
+      const lr = this.lr / (1 + ep * 0.002);
+      for (let i = 0; i < h; i++) {
+        for (let j = 0; j < d; j++) gW1[i][j] = gW1[i][j] / n + this.l2 * this.W1[i][j];
+        gW2[i] = gW2[i] / n + this.l2 * this.W2[i];
+      }
+      gb2 /= n;
+      for (let i = 0; i < h; i++) gb1[i] /= n;
+      for (let i = 0; i < h; i++) {
+        for (let j = 0; j < d; j++) this.W1[i][j] -= lr * gW1[i][j];
+        this.W2[i] -= lr * gW2[i];
+        this.b1[i] -= lr * gb1[i];
+      }
+      this.b2 -= lr * gb2;
+    }
+    return this;
+  };
+  MLP.prototype.proba = function (x) {
+    const h = this.hidden, d = x.length;
+    let z = this.b2;
+    for (let i = 0; i < h; i++) {
+      let s = this.b1[i];
+      const row = this.W1[i];
+      for (let j = 0; j < d; j++) s += row[j] * x[j];
+      z += this.W2[i] * Math.tanh(s);
+    }
+    return sigmoid(z);
+  };
+  MLP.prototype.predict = function (x) { return this.proba(x) >= 0.5 ? 1 : 0; };
+  MLP.prototype.score = function (x) { return Math.log(Math.max(this.proba(x), 1e-9) / Math.max(1 - this.proba(x), 1e-9)); };
+  ML.MLP = MLP;
+
+  /* -------------------------------------------------- 完整模型（含预处理链） */
+  function makeBase(kind, opts) {
+    opts = opts || {};
+    if (kind === 'svm') return new LinearSVM(opts);
+    if (kind === 'mlp') return new MLP(opts);
+    return new LDA(opts.lambda);
+  }
+
+  function Model(kind, opts) {
+    this.kind = kind;
+    this.opts = opts || {};
+    this.scaler = new Scaler();
+    this.pca = null;
+    this.model = null;
+    this.trainAcc = 0;
+    this.cvAcc = 0;
+    this.n = 0;
+  }
+  Model.prototype.name = function () {
+    return this.kind === 'svm' ? '线性 SVM' : (this.kind === 'mlp' ? 'MLP 神经网络' : 'LDA');
+  };
+  Model.prototype.fit = function (X, y) {
+    const n = X.length;
+    if (n < 4) throw new Error('样本太少（至少 4 个窗口）');
+    this.n = n;
+    this.scaler.fit(X);
+    let Z = this.scaler.transformAll(X);
+
+    // 维度高于样本量时必然过拟合，先降维
+    const dim = Z[0].length;
+    if (this.opts.usePca !== false && dim > Math.max(2, Math.floor(n / 3))) {
+      this.pca = new PCA(Math.min(8, Math.max(2, Math.floor(n / 3))), 0.95).fit(Z);
+      Z = this.pca.transformAll(Z);
+    } else {
+      this.pca = null;
+    }
+    this.model = makeBase(this.kind, this.opts).fit(Z, y);
+
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (this.predictRawUsing(Z[i]) === y[i]) ok++;
+    this.trainAcc = ok / n;
+    this.cvAcc = this.crossValidate(Z, y);
+    return this;
+  };
+  Model.prototype.predictRawUsing = function (z) { return this.model.predict(z); };
+  Model.prototype.transform = function (x) {
+    let z = this.scaler.transform(x);
+    if (this.pca) z = this.pca.transform(z);
+    return z;
+  };
+  Model.prototype.predict = function (x) { return this.model.predict(this.transform(x)); };
+  Model.prototype.proba = function (x) { return this.model.proba(this.transform(x)); };
+  /** 留一法交叉验证：样本少时最诚实的评估 */
+  Model.prototype.crossValidate = function (Z, y) {
+    const n = Z.length;
+    const classes = [];
+    y.forEach(function (v) { if (classes.indexOf(v) < 0) classes.push(v); });
+    if (classes.length < 2) return 0;
+    let ok = 0;
+    for (let hold = 0; hold < n; hold++) {
+      const Xtr = [], ytr = [];
+      for (let i = 0; i < n; i++) if (i !== hold) { Xtr.push(Z[i]); ytr.push(y[i]); }
+      try {
+        const m = makeBase(this.kind, this.opts).fit(Xtr, ytr);
+        if (m.predict(Z[hold]) === y[hold]) ok++;
+      } catch (e) { /* 极少数情况下某类只剩一个点 */ }
+    }
+    return ok / n;
+  };
+  ML.Model = Model;
+
+  /** 特征重要度（LDA/SVM 的权重大小排序，用于解释模型学到了什么） */
+  ML.explain = function (model, names) {
+    if (!model || !model.model || !model.model.w) return [];
+    const w = model.model.w;
+    const rows = w.map(function (v, i) {
+      return { i: i, w: v, name: names && names[i] ? names[i] : ('f' + i) };
+    });
+    rows.sort(function (a, b) { return Math.abs(b.w) - Math.abs(a.w); });
+    return rows.slice(0, 8);
+  };
+
+})(window.EEG = window.EEG || {});
+
+/* ==================== 06-ui.js ==================== */
+/* =============================================================================
+ *  06-ui.js  —  流水线编排 + 可视化 + 交互
+ *  数据流：
+ *     MuseSimulator / 粘贴的汝 muse-js 包
+ *        └─(逐样点)─> FilterChain 带通+陷波 ─> 显示缓冲
+ *        └─(每滑一个 step)─> 去伪迹(回归→ICA) ─> 特征 ─> 分类 ─> 反馈(+HTTP)
+ * ========================================================================== */
+(function (NS) {
+  'use strict';
+  const $ = function (id) { return document.getElementById(id); };
+  const DSP = NS.DSP, Art = NS.Artifacts, Feat = NS.Features, ML = NS.ML;
+  const CH = NS.CHANNELS;
+  const C = {
+    raw: '#54637f', filt: '#4cc9f0', clean: '#22d3a6', blink: 'rgba(255,93,115,.55)',
+    grid: '#182339', axis: '#4d6188', text: '#8ba0c2', accent: '#7b61ff'
+  };
+  const DISPLAY_SECONDS = 4;          // 时域波形显示窗口
+  const CALIB_SEC = 4;                // 每个校准类别的采集时长（秒）
+  const BAND_COLORS = ['#3a6ea5', '#4a8fc7', '#22d3a6', '#ffb020', '#ff6bd6'];
+
+  /* ================================================================= 全局状态 */
+  const S = {
+    fs: NS.SAMPLE_RATE,
+    running: false,
+    speed: 4,
+    sim: null,
+    chain: null,
+    sampleCount: 0,
+    lastAnalyzed: -1,
+    windows: 0,
+    winTimes: [],
+    costMs: 0,
+    buf: { raw: [[], [], [], []], filt: [[], [], [], []], clean: [[], [], [], []] },
+    rawWin: [[], [], [], []],
+    filtWin: [[], [], [], []],
+    last: null,
+    model: null,
+    calibMode: null,            // null | 'open' | 'closed'
+    calibEndSample: 0,
+    calibOpen: [],              // 睁眼(基类 0)的特征向量
+    calibClosed: [],            // 闭眼(类 1)的特征向量
+    feedback: { sent: 0, lastAt: 0, warned: false },
+    logs: [],
+    logDirty: true
+  };
+
+  NS.App = { state: S };
+
+  /* ==================================================================== 工具 */
+  function num(id, dflt) {
+    const el = $(id);
+    if (!el) return dflt;
+    const v = parseFloat(el.value);
+    return isFinite(v) ? v : dflt;
+  }
+  function fmt(v, d) { return (v == null || !isFinite(v)) ? '—' : v.toFixed(d == null ? 2 : d); }
+  function nowStamp() {
+    const d = new Date();
+    return d.toTimeString().slice(3, 8);
+  }
+
+  function readConfig() {
+    return {
+      fs: S.fs,
+      bandpass: {
+        enabled: $('bpOn').checked,
+        low: Math.max(0.1, num('bpLow', 1)),
+        high: Math.max(1, num('bpHigh', 50)),
+        order: parseInt($('bpOrder').value, 10) || 4
+      },
+      notch: {
+        enabled: $('notchOn').checked,
+        f0: parseFloat($('notchF').value) || 50,
+        harmonics: $('notchH').checked,
+        q: num('notchQ', 30)
+      },
+      artifact: {
+        regression: {
+          enabled: $('regOn').checked,
+          refs: [1, 2],
+          shrink: 0.95
+        },
+        ica: {
+          enabled: $('icaOn').checked,
+          kurtThreshold: num('kurtT', 6),
+          lowThreshold: num('lowT', 0.6)
+        }
+      },
+      window: {
+        sec: parseFloat($('winSec').value) || 1,
+        overlap: num('overlap', 50) / 100,
+        nfft: parseInt($('fftN').value, 10) || 0,
+        featSet: $('featSet').value
+      },
+      clf: {
+        kind: $('clfType').value,
+        usePca: true
+      }
+    };
+  }
+  S.cfg = null;
+
+  function applyConfig(rebuildFilter) {
+    S.cfg = readConfig();
+    if (rebuildFilter) {
+      const wasRunning = S.running;
+      S.chain = new DSP.FilterChain(S.cfg, 4);
+      if (wasRunning) S.chain.reset();
+      log('已重建滤波器：' + (S.chain.describe().join(' → ') || '（直通）'), 'hl');
+    }
+    updateFlowHighlight();
+  }
+
+  function updateFlowHighlight() {
+    const cfg = S.cfg;
+    const set = function (k, on) {
+      const el = document.querySelector('.flow .step[data-k="' + k + '"]');
+      if (el) el.classList.toggle('on', !!on);
+    };
+    set('filt', cfg.bandpass.enabled || cfg.notch.enabled);
+    set('art', cfg.artifact.regression.enabled || cfg.artifact.ica.enabled);
+    set('feat', true);
+    set('cls', !!S.model);
+    set('fb', true);
+  }
+
+  function log(text, cls) {
+    S.logs.push({ t: nowStamp(), text: text, cls: cls || '' });
+    if (S.logs.length > 500) S.logs.splice(0, 200);
+    S.logDirty = true;
+  }
+
+  function flushLog() {
+    if (!S.logDirty) return;
+    S.logDirty = false;
+    const box = $('log');
+    const shown = S.logs.slice(-160);
+    const html = shown.map(function (l) {
+      return '<div><span class="t">' + l.t + '</span> <span class="' + l.cls + '">' + l.text + '</span></div>';
+    }).join('');
+    box.innerHTML = html;
+    box.scrollTop = box.scrollHeight;
+  }
+
+  /* ============================================================== 数据推入 */
+  function winSamples() { return Math.max(32, Math.round(S.cfg.window.sec * S.fs)); }
+  function stepSamples() {
+    const w = winSamples();
+    return Math.max(1, Math.round(w * (1 - S.cfg.window.overlap)));
+  }
+  function displayLen() { return Math.round(DISPLAY_SECONDS * S.fs); }
+
+  function pushToBuffers(c, x, y) {
+    const len = displayLen();
+    const br = S.buf.raw[c], bf = S.buf.filt[c], bc = S.buf.clean[c];
+    br.push(x); bf.push(y); bc.push(y);          // 去伪迹结果稍后覆盖写入
+    if (br.length > len) br.splice(0, br.length - len);
+    if (bf.length > len) bf.splice(0, bf.length - len);
+    if (bc.length > len) bc.splice(0, bc.length - len);
+
+    const rw = S.rawWin[c], fw = S.filtWin[c];
+    rw.push(x); fw.push(y);
+    const cap = winSamples() * 2 + 64;
+    if (rw.length > cap) rw.splice(0, rw.length - cap);
+    if (fw.length > cap) fw.splice(0, fw.length - cap);
+  }
+
+  function writeBackClean(clean) {
+    const win = clean[0].length;
+    for (let c = 0; c < 4; c++) {
+      const buf = S.buf.clean[c];
+      const start = Math.max(0, buf.length - win);
+      const n = Math.min(win, buf.length);
+      for (let i = 0; i < n; i++) buf[start + i] = clean[c][i];
+    }
+  }
+
+  /** 推入一个 muse-js 风格的块（4 通道 × 12 样本，时间对齐） */
+  function pushBlock() {
+    const packets = [];
+    for (let c = 0; c < 4; c++) packets.push(S.sim.nextPacket());
+    const n = NS.PACKET_SIZE;
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < 4; c++) {
+        const x = packets[c].samples[i];
+        const y = S.chain ? S.chain.process(c, x) : x;
+        pushToBuffers(c, x, y);
+      }
+      S.sampleCount++;
+      maybeAnalyze();
+    }
+  }
+
+  /* ============================================ 外部数据接入（真实 Muse 设备） */
+  // muse-js 的 eegReadings 是逐电极下发的，这里攒齐 4 个电极后按样本对齐推入流水线。
+  let pendingPkt = {};
+  /**
+   * 喂入一个 muse-js 风格的包：{ eegChannel|electrode, samples }。
+   * 攒齐 TP9/AF7/AF8/TP10 后自动推进流水线；渲染由动画帧接管，无需手动刷新。
+   * @returns {number} 本次实际推入的样本数（尚未攒齐时为 0）
+   */
+  function feedPacket(pkt) {
+    if (!pkt) return 0;
+    const c = (pkt.eegChannel != null) ? pkt.eegChannel
+      : (pkt.channel != null) ? pkt.channel : pkt.electrode;
+    if (c == null || c < 0 || c > 3) return 0;
+    const s = pkt.samples || pkt.values || pkt.data;
+    if (!s || !s.length) return 0;
+    pendingPkt[c] = s;
+    for (let k = 0; k < 4; k++) if (!pendingPkt[k]) return 0;
+
+    let n = Infinity;
+    for (let k = 0; k < 4; k++) n = Math.min(n, pendingPkt[k].length);
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < 4; k++) {
+        const x = pendingPkt[k][i];
+        const y = S.chain ? S.chain.process(k, x) : x;
+        pushToBuffers(k, x, y);
+      }
+      S.sampleCount++;
+      maybeAnalyze();
+    }
+    pendingPkt = {};
+    return n;
+  }
+  function feedPackets(list) {
+    let total = 0;
+    for (let i = 0; i < (list || []).length; i++) total += feedPacket(list[i]);
+    return total;
+  }
+
+  function maybeAnalyze() {
+    const w = winSamples();
+    if (S.sampleCount < w) return;
+    if (S.sampleCount - S.lastAnalyzed < stepSamples()) return;
+    S.lastAnalyzed = S.sampleCount;
+
+    const raw = S.rawWin.map(function (a) { return a.slice(-w); });
+    const filt = S.filtWin.map(function (a) { return a.slice(-w); });
+    const t0 = performance.now();
+    const res = analyzeWindow(raw, filt);
+    S.costMs = performance.now() - t0;
+
+    writeBackClean(res.art.cleaned);
+    S.last = res;
+    S.windows++;
+    S.winTimes.push(performance.now());
+    if (S.winTimes.length > 30) S.winTimes.shift();
+    handleCalibration(res);
+    reportWindow(res);
+  }
+
+  /* ======================================================== 单窗口完整链路 */
+  /**
+   * ② 滤波已在流式阶段完成 → ③ 去伪迹 → ④ 特征 → ⑤ 分类
+   * @param rawWin  原始窗口（仅用于对比展示与频带对照）
+   * @param filtWin 带通+陷波后的窗口
+   */
+  function analyzeWindow(rawWin, filtWin) {
+    const cfg = S.cfg;
+
+    // ---- ③ 去伪迹 ----
+    const art = Art.removeArtifacts(filtWin, S.fs, cfg.artifact);
+
+    // ---- ④ 特征 ----
+    const feat = Feat.compute(art.cleaned, S.fs, {
+      nfft: cfg.window.nfft,
+      overlap: 0.5,
+      featSet: cfg.window.featSet
+    });
+
+    // 原始（未滤波）通道 0 的谱，用于对比展示工频与伪迹
+    const rawPsd = DSP.psd(rawWin[0], S.fs, { nfft: cfg.window.nfft || 0, overlap: 0.5 });
+    // 工频残留量（用 Goertzel 单点测幅）
+    const humRaw = DSP.goertzel(rawWin[0], S.fs, cfg.notch.f0);
+    const humFilt = DSP.goertzel(filtWin[0], S.fs, cfg.notch.f0);
+
+    // ---- ⑤ 分类 ----
+    let pred = null;
+    if (S.model) {
+      try {
+        const p1 = S.model.proba(feat.vector);
+        const label = S.model.predict(feat.vector);
+        pred = { label: label, p1: p1, conf: label === 1 ? p1 : 1 - p1 };
+      } catch (e) {
+        pred = null;
+      }
+    }
+
+    return {
+      raw: rawWin, filt: filtWin, art: art, feat: feat, pred: pred,
+      rawPsd: rawPsd, humRaw: humRaw, humFilt: humFilt,
+      costMs: S.costMs, sampleIndex: S.sampleCount, timeSec: S.sampleCount / S.fs
+    };
+  }
+
+  function reportWindow(res) {
+    const t = res.timeSec.toFixed(2);
+    const parts = [];
+    parts.push('#' + S.windows + ' t=' + t + 's');
+    parts.push('工频 ' + fmt(res.humRaw, 2) + '→' + fmt(res.humFilt, 2) + 'µV');
+    if (res.art.report.regression) {
+      const b = res.art.report.regression.betas;
+      parts.push('眼电回归 β[' + b.map(function (v) { return v.toFixed(2); }).join(',') + ']');
+    }
+    if (res.art.report.ica) {
+      parts.push('ICA 剔除 ' + res.art.report.ica.nRemoved + '/4');
+    }
+    parts.push(Feat.summarize(res.feat));
+    if (res.pred) {
+      parts.push('→ ' + (res.pred.label === 1 ? '闭眼/α强' : '睁眼/基线') +
+        ' (' + (res.pred.conf * 100).toFixed(0) + '%)');
+    }
+    parts.push('[' + res.costMs.toFixed(1) + 'ms]');
+    log(parts.join(' | '), S.calibMode ? 'warn' : '');
+    sendFeedback(res);
+  }
+
+  /* ================================================================ 波形绘制 */
+  function fitCanvas(cv) {
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = Math.max(240, cv.clientWidth || 600);
+    if (!cv.dataset.h) cv.dataset.h = cv.getAttribute('height') || 240;
+    const cssH = parseInt(cv.dataset.h, 10);
+    cv.style.height = cssH + 'px';
+    const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    return { ctx: ctx, w: cssW, h: cssH };
+  }
+
+  function percentile(arr, p) {
+    if (!arr.length) return 0;
+    const a = arr.slice().sort(function (x, y) { return x - y; });
+    const i = Math.max(0, Math.min(a.length - 1, Math.round(p * (a.length - 1))));
+    return a[i];
+  }
+
+  function drawWave() {
+    const cv = $('cvWave');
+    const g = fitCanvas(cv), ctx = g.ctx, W = g.w, H = g.h;
+    const rows = 4, padTop = 6, rowH = (H - padTop * 2) / rows;
+    const n = S.buf.filt[0].length || 1;
+
+    ctx.font = '10px Consolas, monospace';
+    ctx.textBaseline = 'middle';
+
+    for (let c = 0; c < 4; c++) {
+      const top = padTop + c * rowH;
+      const cy = top + rowH / 2;
+      // 行背景
+      ctx.fillStyle = c % 2 ? 'rgba(255,255,255,.012)' : 'rgba(255,255,255,.028)';
+      ctx.fillRect(0, top, W, rowH);
+      ctx.strokeStyle = C.grid;
+      ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(W, cy); ctx.stroke();
+
+      const raw = S.buf.raw[c], filt = S.buf.filt[c], clean = S.buf.clean[c];
+      if (!filt.length) continue;
+      // 幅度自适应：以原始信号的 p99 为准（保证眨眼这类大伪迹也框得住）
+      const amp = Math.max(percentile(raw.map(Math.abs), 0.99), 12);
+      const scale = (rowH / 2 - 6) / amp;
+
+      const drawSeries = function (data, color, width, alpha) {
+        if (!data.length) return;
+        const start = W - (data.length / n) * W;
+        ctx.beginPath();
+        for (let i = 0; i < data.length; i++) {
+          const x = start + (i / n) * W;
+          let v = data[i] * scale;
+          if (v > rowH / 2 - 3) v = rowH / 2 - 3;
+          if (v < -(rowH / 2 - 3)) v = -(rowH / 2 - 3);
+          const y = cy - v;
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.globalAlpha = alpha == null ? 1 : alpha;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      };
+
+      drawSeries(raw, C.raw, 1.1, 0.95);
+      drawSeries(clean, C.clean, 1.0, 0.9);
+      drawSeries(filt, C.filt, 1.2, 0.95);
+
+      // 眨眼标注：原始信号超阈值处画红条
+      const thr = amp * 0.55;
+      ctx.fillStyle = C.blink;
+      const start = W - (raw.length / n) * W;
+      for (let i = 0; i < raw.length; i++) {
+        if (Math.abs(raw[i]) > thr) ctx.fillRect(start + (i / n) * W, top + 1, 1.5, rowH - 2);
+      }
+
+      // 通道名 + 量程
+      ctx.fillStyle = '#c8d6ee';
+      ctx.fillText(CH[c], 6, top + 11);
+      ctx.fillStyle = C.text;
+      ctx.fillText('±' + amp.toFixed(0) + 'µV', W - 62, top + 11);
+    }
+    // 时间轴
+    ctx.fillStyle = C.text;
+    ctx.fillText('最近 ' + DISPLAY_SECONDS + 's', 6, H - 6);
+  }
+
+  function toDb(x) { return 10 * Math.log10(Math.max(x, 1e-12)); }
+
+  function drawPsd() {
+    const cv = $('cvPsd');
+    const g = fitCanvas(cv), ctx = g.ctx, W = g.w, H = g.h;
+    const padL = 38, padB = 22, padT = 10, padR = 10;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const fMax = 60;
+
+    ctx.strokeStyle = C.grid;
+    ctx.lineWidth = 1;
+    for (let f = 0; f <= fMax; f += 10) {
+      const x = padL + (f / fMax) * plotW;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+      ctx.fillStyle = C.text;
+      ctx.font = '10px Consolas, monospace';
+      ctx.fillText(f + '', x - 5, H - 8);
+    }
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (i / 4) * plotH;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
+    }
+
+    if (!S.last) {
+      ctx.fillStyle = C.text;
+      ctx.fillText('等待数据…', padL + 8, padT + 14);
+      return;
+    }
+    const raw = S.last.rawPsd, clean = S.last.feat.psd;
+    const fmaxBin = function (psd) {
+      let m = -Infinity;
+      for (let i = 0; i < psd.freq.length; i++) {
+        if (psd.freq[i] > fMax) break;
+        m = Math.max(m, toDb(psd.psd[i]));
+      }
+      return m;
+    };
+    const hi = Math.max(fmaxBin(raw), fmaxBin(clean)) + 6;
+    const lo = hi - 62;
+    const yOf = function (db) { return padT + plotH * (1 - (db - lo) / (hi - lo)); };
+
+    // 频带底色
+    const bands = Feat.BANDS;
+    for (let b = 0; b < bands.length; b++) {
+      const x0 = padL + (bands[b].lo / fMax) * plotW;
+      const x1 = padL + (Math.min(bands[b].hi, fMax) / fMax) * plotW;
+      ctx.fillStyle = BAND_COLORS[b] + '18';
+      ctx.fillRect(x0, padT, x1 - x0, plotH);
+      ctx.fillStyle = 'rgba(255,255,255,.35)';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(bands[b].symbol, (x0 + x1) / 2 - 3, padT + 10);
+    }
+    // 工频标线
+    const f0 = S.cfg.notch.f0;
+    [f0, f0 * 2].forEach(function (f) {
+      if (f > fMax) return;
+      const x = padL + (f / fMax) * plotW;
+      ctx.strokeStyle = 'rgba(255,93,115,.45)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH); ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    const plot = function (psd, color, width, alpha) {
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < psd.freq.length; i++) {
+        const f = psd.freq[i];
+        if (f > fMax) break;
+        const x = padL + (f / fMax) * plotW;
+        const y = yOf(toDb(psd.psd[i]));
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    plot(raw, C.raw, 1.2, 0.9);
+    plot(clean, C.filt, 1.6, 0.95);
+
+    ctx.fillStyle = C.text;
+    ctx.font = '10px Consolas, monospace';
+    ctx.fillText(hi.toFixed(0) + ' dB', 4, padT + 8);
+    ctx.fillText(lo.toFixed(0) + ' dB', 4, padT + plotH);
+  }
+
+  function drawBands() {
+    const cv = $('cvBands');
+    const g = fitCanvas(cv), ctx = g.ctx, W = g.w, H = g.h;
+    const padL = 30, padB = 26, padT = 12, padR = 8;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const bands = Feat.BANDS;
+
+    ctx.strokeStyle = C.grid;
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (i / 4) * plotH;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
+    }
+    ctx.font = '10px Consolas, monospace';
+    ctx.fillStyle = C.text;
+
+    const feat = S.last ? S.last.feat : null;
+    // 用绝对功率（µV²）画柱，跨通道统一量程
+    let maxV = 1e-6;
+    if (feat) {
+      for (let c = 0; c < 4; c++)
+        for (let b = 0; b < bands.length; b++)
+          maxV = Math.max(maxV, feat.perChannel[c].band[bands[b].key]);
+    }
+    maxV *= 1.15;
+
+    const groupW = plotW / 4;
+    for (let c = 0; c < 4; c++) {
+      const gx = padL + c * groupW;
+      const bw = Math.min(13, (groupW - 12) / bands.length);
+      for (let b = 0; b < bands.length; b++) {
+        const v = feat ? feat.perChannel[c].band[bands[b].key] : 0;
+        const h = (v / maxV) * plotH;
+        const x = gx + 6 + b * (bw + 2);
+        ctx.fillStyle = BAND_COLORS[b];
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(x, padT + plotH - h, bw, Math.max(h, 0.5));
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = '#c8d6ee';
+      ctx.font = '10px Consolas, monospace';
+      ctx.fillText(CH[c], gx + groupW / 2 - 10, H - 12);
+    }
+    ctx.fillStyle = C.text;
+    ctx.fillText(maxV.toFixed(1) + ' µV²', 2, padT + 8);
+    // 图例
+    let lx = padL + plotW - 150;
+    for (let b = 0; b < bands.length; b++) {
+      ctx.fillStyle = BAND_COLORS[b];
+      ctx.fillRect(lx, padT - 8, 8, 8);
+      ctx.fillStyle = C.text;
+      ctx.font = '10px sans-serif';
+      ctx.fillText(bands[b].symbol, lx + 11, padT - 1);
+      lx += 28;
+    }
+  }
+
+  /* ============================================================ DOM 状态更新 */
+  function updateVerdict() {
+    const el = $('verdict'), sub = $('verdictSub');
+    if (!S.model) {
+      el.textContent = '—'; el.className = 'big neutral';
+      sub.textContent = '先点左侧「校准」按钮训练模型';
+      $('confBar').style.width = '0%';
+      $('confV').textContent = '0%';
+      $('clfTag').textContent = '未训练';
+    } else {
+      $('clfTag').textContent = S.model.name() + ' 已就绪';
+    }
+    const res = S.last;
+    if (res && res.pred && S.model) {
+      const isClosed = res.pred.label === 1;
+      el.textContent = isClosed ? '闭眼 / α 增强' : '睁眼 / 基线';
+      el.className = 'big' + (isClosed ? '' : ' neutral');
+      sub.textContent = '窗口 ' + res.timeSec.toFixed(1) + 's · ' +
+        (isClosed ? '检测到 α 节律占优' : 'α 波受抑制') +
+        ' · 模型 ' + S.model.name();
+      const pc = Math.round(res.pred.conf * 100);
+      $('confBar').style.width = pc + '%';
+      $('confV').textContent = pc + '%';
+    }
+    const ab = S.last ? S.last.feat.meanAlphaBeta : 0;
+    $('abV').textContent = fmt(ab, 2);
+    $('abBar').style.width = Math.max(0, Math.min(100, ab * 25)) + '%';
+
+    if (S.model) {
+      $('kvModel').textContent = S.model.name() + (S.model.pca ? ' (PCA→' + S.model.pca.components.length + '维)' : '');
+      $('kvTrain').textContent = (S.model.trainAcc * 100).toFixed(0) + '% / LOO ' + (S.model.cvAcc * 100).toFixed(0) + '%';
+      $('kvN').textContent = S.model.n + ' 个窗口';
+    }
+    $('kvFb').textContent = S.feedback.sent + ' 帧';
+    $('calibCount').textContent = '睁眼 ' + S.calibOpen.length + ' / 闭眼 ' + S.calibClosed.length;
+  }
+
+  function updateIcaTable() {
+    const body = $('icaBody');
+    const res = S.last;
+    if (!res || !S.cfg.artifact.ica.enabled || !res.art.report.ica) {
+      body.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#5d7098">' +
+        (S.cfg.artifact.ica.enabled ? '等待窗口…' : 'ICA 已关闭') + '</td></tr>';
+      return;
+    }
+    const comps = res.art.report.ica.components;
+    body.innerHTML = comps.map(function (c) {
+      return '<tr class="' + (c.artifact ? 'rej' : '') + '">' +
+        '<td>IC' + (c.index + 1) + '</td>' +
+        '<td>' + c.kurtosis.toFixed(2) + '</td>' +
+        '<td>' + (c.lowRatio * 100).toFixed(0) + '%</td>' +
+        '<td>' + c.eogCorr.toFixed(2) + '</td>' +
+        '<td>' + (c.artifact ? '剔除' : '保留') + '</td>' +
+        '</tr>';
+    }).join('') + '<tr><td colspan="5" style="color:#8ba0c2;border:0;padding-top:6px">' +
+      (res.art.report.ica.nRemoved ? '本窗口剔除 ' + res.art.report.ica.nRemoved + ' 个伪迹成分：' +
+        comps.filter(function (c) { return c.artifact; }).map(function (c) { return c.reason; }).join('；')
+        : '本窗口未检出伪迹成分') + '</td></tr>';
+  }
+
+  function updateTopStats() {
+    $('stWin').textContent = S.windows;
+    $('stSamp').textContent = S.sampleCount.toLocaleString();
+    $('stMs').textContent = S.costMs.toFixed(1);
+    let rate = 0;
+    if (S.winTimes.length >= 2) {
+      const span = (S.winTimes[S.winTimes.length - 1] - S.winTimes[0]) / 1000;
+      if (span > 0.2) rate = (S.winTimes.length - 1) / span;
+    }
+    $('stRate').textContent = rate.toFixed(1);
+  }
+
+  function render() {
+    drawWave();
+    drawPsd();
+    drawBands();
+    updateVerdict();
+    updateIcaTable();
+    updateTopStats();
+    flushLog();
+  }
+
+  /* ============================================================== 反馈输出 */
+  function buildFeedback(res) {
+    const mr = res.feat.meanRelative;
+    return {
+      ts: Date.now(),
+      windowIndex: S.windows,
+      t: Number(res.timeSec.toFixed(3)),
+      label: res.pred ? res.pred.label : null,
+      labelName: res.pred ? (res.pred.label === 1 ? 'closed-eyes' : 'open-eyes') : 'unlabeled',
+      confidence: res.pred ? Number(res.pred.conf.toFixed(3)) : null,
+      alphaBeta: Number(res.feat.meanAlphaBeta.toFixed(3)),
+      bandPowerRelative: {
+        delta: Number(mr.delta.toFixed(4)), theta: Number(mr.theta.toFixed(4)),
+        alpha: Number(mr.alpha.toFixed(4)), beta: Number(mr.beta.toFixed(4)),
+        gamma: Number(mr.gamma.toFixed(4))
+      },
+      spectralEntropy: Number(res.feat.meanEntropy.toFixed(3)),
+      hum50: { raw: Number(res.humRaw.toFixed(3)), filtered: Number(res.humFilt.toFixed(3)) },
+      artifactsRemoved: res.art.report.ica ? res.art.report.ica.nRemoved : 0,
+      latencyMs: Number(res.costMs.toFixed(1))
+    };
+  }
+
+  function sendFeedback(res) {
+    if (!$('fbHttp').checked) return;
+    const now = performance.now();
+    if (now - S.feedback.lastAt < 400) return;       // 节流
+    S.feedback.lastAt = now;
+    const url = $('fbUrl').value;
+    const event = buildFeedback(res);
+    NS.App.lastFeedback = event;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event)
+    }).then(function () {
+      S.feedback.sent++;
+    }).catch(function () {
+      // 端点不可达时只记一次日志，避免刷屏
+      if (!S.feedback.warned) {
+        S.feedback.warned = true;
+        log('HTTP 反馈端点不可达（' + url + '），可继续本地演示', 'err');
+      }
+    });
+  }
+
+  /* ================================================================== 校准 */
+  function startCalib(kind) {
+    if (!S.running) startRun();
+    S.calibMode = kind;
+    S.calibEndSample = S.sampleCount + Math.round(CALIB_SEC * S.fs);   // 采集 CALIB_SEC 秒
+    if (kind === 'auto') {
+      // 一键校准：先睁眼 3s 再闭眼 3s
+      S.sim.setMode('open');
+      $('srcMode').value = 'open';
+      S.calibMode = 'open';
+      S.calibEndSample = S.sampleCount + Math.round(CALIB_SEC * S.fs);
+      log('校准开始：请保持「睁眼放松」' + CALIB_SEC + ' 秒…', 'warn');
+    } else {
+      S.sim.setMode(kind);
+      $('srcMode').value = kind;
+      log('开始采集「' + (kind === 'closed' ? '闭眼' : '睁眼') + '」' + CALIB_SEC + ' 秒…', 'warn');
+    }
+  }
+
+  function handleCalibration(res) {
+    if (!S.calibMode) return;
+    if (S.calibMode === 'open') S.calibOpen.push(res.feat.vector.slice());
+    else if (S.calibMode === 'closed') S.calibClosed.push(res.feat.vector.slice());
+
+    if (S.sampleCount >= S.calibEndSample) {
+      const finished = S.calibMode;
+      if (finished === 'open' && $('btnCalib').dataset.chain === '1') {
+        // 一键校准的第二步
+        S.calibMode = 'closed';
+        S.sim.setMode('closed');
+        $('srcMode').value = 'closed';
+        S.calibEndSample = S.sampleCount + Math.round(CALIB_SEC * S.fs);
+        log('睁眼采样完成（' + S.calibOpen.length + ' 个窗口）。现在请「闭眼放松」' + CALIB_SEC + ' 秒…', 'warn');
+        return;
+      }
+      S.calibMode = null;
+      $('btnCalib').dataset.chain = '';
+      log((finished === 'closed' ? '闭眼' : '睁眼') + '采样完成：' + (finished === 'closed' ? S.calibClosed.length : S.calibOpen.length) + ' 个窗口', 'ok');
+      tryTrain();
+    }
+  }
+
+  function tryTrain() {
+    const X = [], y = [];
+    S.calibOpen.forEach(function (v) { X.push(v); y.push(0); });
+    S.calibClosed.forEach(function (v) { X.push(v); y.push(1); });
+    if (S.calibOpen.length < 2 || S.calibClosed.length < 2) {
+      log('样本不足（每类至少 2 个窗口），请再采一次', 'err');
+      return;
+    }
+    try {
+      const model = new ML.Model(S.cfg.clf.kind, {
+        lambda: 0.05, hidden: 8, epochs: 700, lr: 0.08, usePca: S.cfg.clf.usePca
+      });
+      model.fit(X, y);
+      S.model = model;
+      log('训练完成：' + model.name() +
+        ' | 特征 ' + X[0].length + ' 维' + (model.pca ? ' → PCA ' + model.pca.components.length + ' 维' : '') +
+        ' | 训练准确率 ' + (model.trainAcc * 100).toFixed(0) + '%' +
+        ' | 留一法 ' + (model.cvAcc * 100).toFixed(0) + '%', 'ok');
+      const ex = ML.explain(model, S.last ? S.last.feat.names : null);
+      if (ex.length && !model.pca) {
+        log('主要判别特征：' + ex.slice(0, 4).map(function (r) {
+          return r.name + '(' + r.w.toFixed(2) + ')';
+        }).join('、'), 'hl');
+      }
+      updateFlowHighlight();
+    } catch (e) {
+      log('训练失败：' + e.message, 'err');
+    }
+  }
+
+  /* ================================================================ 运行控制 */
+  let rafId = null;
+  let lastFrame = 0;
+  let sampleAcc = 0;
+
+  function loop(ts) {
+    rafId = requestAnimationFrame(loop);
+    if (!lastFrame) lastFrame = ts;
+    const dt = Math.min(0.25, (ts - lastFrame) / 1000);
+    lastFrame = ts;
+
+    if (S.running) {
+      sampleAcc += dt * S.fs * S.speed;
+      let blocks = Math.floor(sampleAcc / NS.PACKET_SIZE);
+      if (blocks > 24) {                       // 帧率兜底：单帧最多处理 24 个包
+        blocks = 24;
+        sampleAcc = 0;
+      } else {
+        sampleAcc -= blocks * NS.PACKET_SIZE;
+      }
+      for (let i = 0; i < blocks; i++) pushBlock();
+    }
+    render();
+  }
+
+  function startRun() {
+    if (S.running) return;
+    S.running = true;
+    S.sim.setMode($('srcMode').value === 'json' ? 'mixed' : $('srcMode').value);
+    $('btnRun').textContent = '⏸ 暂停';
+    $('btnPause').disabled = true;
+    log('开始采集（' + $('srcMode').value + '，' + S.speed + '× 加速）', 'ok');
+  }
+  function pauseRun() {
+    S.running = false;
+    $('btnRun').textContent = '▶ 开始采集';
+    $('btnPause').disabled = true;
+    $('btnStep').disabled = false;
+    log('已暂停', 'warn');
+  }
+
+  function resetAll() {
+    S.running = false;
+    S.buf = { raw: [[], [], [], []], filt: [[], [], [], []] };
+    S.buf.clean = [[], [], [], []];
+    S.rawWin = [[], [], [], []];
+    S.filtWin = [[], [], [], []];
+    S.sampleCount = 0; S.lastAnalyzed = -1; S.windows = 0;
+    S.winTimes = []; S.last = null; S.logs = []; S.costMs = 0;
+    S.calibOpen = []; S.calibClosed = []; S.calibMode = null;
+    S.sim = new NS.MuseSimulator({ fs: S.fs, mode: 'mixed', seed: 20261020 });
+    S.chain = new DSP.FilterChain(S.cfg, 4);
+    S.logDirty = true;
+    $('btnRun').textContent = '▶ 开始采集';
+    $('btnStep').disabled = true;
+    log('状态已重置（滤波器状态、缓冲、校准样本全部清空）', 'hl');
+  }
+
+  /* ============================================================== JSON 回放 */
+  function loadJsonMode() {
+    const text = $('jsonBox').value.trim();
+    if (!text) { log('请先粘贴 muse-js 的 eegReadings JSON', 'err'); return; }
+    const packets = NS.parseMuseJson(text);
+    if (!packets.length) { log('解析失败：没找到带 eegChannel/samples 的记录', 'err'); return; }
+    const rec = NS.assembleRecording(packets, S.fs);
+    log('解析到 ' + packets.length + ' 个包 → ' + rec.seconds.toFixed(2) + ' 秒 / 4 通道，开始离线处理', 'ok');
+    if (rec.seconds < 0.3) { log('数据太短（<0.3s），无法形成分析窗口', 'err'); return; }
+
+    // 离线批处理：滤波 → 分窗 → 去伪迹 → 特征 → 分类
+    S.running = false;
+    const chain = new DSP.FilterChain(S.cfg, 4);
+    const n = rec.channels[0].length;
+    S.buf = { raw: [[], [], [], []], filt: [[], [], [], []] };
+    S.buf.clean = [[], [], [], []];
+    S.rawWin = [[], [], [], []];
+    S.filtWin = [[], [], [], []];
+    S.sampleCount = 0; S.lastAnalyzed = -1; S.windows = 0; S.winTimes = [];
+
+    const w = winSamples(), step = stepSamples();
+    for (let i = 0; i < n; i++) {
+      for (let c = 0; c < 4; c++) {
+        const x = rec.channels[c][i];
+        const y = chain.process(c, x);
+        pushToBuffers(c, x, y);
+      }
+      S.sampleCount++;
+      if (S.sampleCount >= w && S.sampleCount - S.lastAnalyzed >= step) {
+        S.lastAnalyzed = S.sampleCount;
+        const t0 = performance.now();
+        const res = analyzeWindow(
+          S.rawWin.map(function (a) { return a.slice(-w); }),
+          S.filtWin.map(function (a) { return a.slice(-w); })
+        );
+        S.costMs = performance.now() - t0;
+        writeBackClean(res.art.cleaned);
+        S.last = res; S.windows++;
+        reportWindow(res);
+      }
+    }
+    log('离线处理完成，共 ' + S.windows + ' 个窗口', 'ok');
+  }
+
+  /* ================================================================ 事件绑定 */
+  function bind() {
+    $('speed').addEventListener('input', function () {
+      S.speed = parseInt(this.value, 10);
+      $('speedV').textContent = S.speed + '×';
+    });
+    ['notchQ'].forEach(function (id) {
+      $(id).addEventListener('input', function () { $('notchQV').textContent = this.value; });
+    });
+    ['kurtT'].forEach(function (id) {
+      $(id).addEventListener('input', function () { $('kurtTV').textContent = parseFloat(this.value).toFixed(1); });
+    });
+    ['lowT'].forEach(function (id) {
+      $(id).addEventListener('input', function () { $('lowTV').textContent = parseFloat(this.value).toFixed(2); });
+    });
+    $('overlap').addEventListener('input', function () { $('overlapV').textContent = this.value + '%'; });
+
+    // 会影响滤波器/窗口的控件：改动即重建
+    ['bpOn', 'bpLow', 'bpHigh', 'bpOrder', 'notchOn', 'notchF', 'notchH', 'notchQ'].forEach(function (id) {
+      $(id).addEventListener('change', function () {
+        applyConfig(true);
+        S.rawWin = [[], [], [], []]; S.filtWin = [[], [], [], []];
+      });
+    });
+    ['regOn', 'icaOn', 'kurtT', 'lowT', 'winSec', 'overlap', 'fftN', 'featSet', 'clfType', 'scaleOn'].forEach(function (id) {
+      $(id).addEventListener('change', function () {
+        applyConfig(false);
+        if (id === 'winSec' || id === 'overlap') { S.rawWin = [[], [], [], []]; S.filtWin = [[], [], [], []]; }
+        if (id === 'clfType' && S.calibOpen.length >= 2 && S.calibClosed.length >= 2) tryTrain();
+      });
+    });
+
+    $('srcMode').addEventListener('change', function () {
+      const v = this.value;
+      $('jsonBox').style.display = v === 'json' ? 'block' : 'none';
+      if (v !== 'json' && S.sim) {
+        S.sim.setMode(v);
+        log('数据源切换为：' + v, 'hl');
+      }
+    });
+
+    $('btnRun').addEventListener('click', function () {
+      if (S.running) pauseRun();
+      else if ($('srcMode').value === 'json') { loadJsonMode(); }
+      else startRun();
+    });
+    $('btnPause').addEventListener('click', pauseRun);
+    $('btnStep').addEventListener('click', function () {
+      if ($('srcMode').value === 'json') { loadJsonMode(); return; }
+      for (let i = 0; i < stepSamples() / NS.PACKET_SIZE + 1; i++) pushBlock();
+      log('单步推进 ' + stepSamples() + ' 个样本', 'hl');
+    });
+    $('btnReset').addEventListener('click', resetAll);
+    $('btnBlink').addEventListener('click', function () {
+      if (!S.running) startRun();
+      S.sim.injectBlink(260);
+      log('注入一次眨眼伪迹（≈260µV，主要出现在 AF7/AF8）', 'warn');
+    });
+    $('btnHum').addEventListener('click', function () {
+      if (!S.running) startRun();
+      S.sim.injectHum(4);
+      log('注入一波 50Hz 工频干扰（幅值 ×5）', 'warn');
+    });
+    $('btnCalib').addEventListener('click', function () {
+      S.calibOpen = []; S.calibClosed = [];
+      this.dataset.chain = '1';
+      startCalib('auto');
+    });
+    $('btnCalibClosed').addEventListener('click', function () {
+      S.calibClosed = [];
+      $('btnCalib').dataset.chain = '';
+      startCalib('closed');
+    });
+    $('btnCalibOpen').addEventListener('click', function () {
+      S.calibOpen = [];
+      $('btnCalib').dataset.chain = '';
+      startCalib('open');
+    });
+  }
+
+  /* ==================================================================== 启动 */
+  // 对外接口：真实设备可直接调用（见 outputs/muse-eeg-pipeline.md 第 6 节）
+  NS.feedPacket = feedPacket;
+  NS.feedPackets = feedPackets;
+  NS.isRunning = function () { return S.running; };
+
+  function init() {
+    S.cfg = readConfig();
+    S.sim = new NS.MuseSimulator({ fs: S.fs, mode: 'mixed', seed: 20261020 });
+    S.chain = new DSP.FilterChain(S.cfg, 4);
+    $('speedV').textContent = S.speed + '×';
+    bind();
+    applyConfig(false);
+    log('就绪。滤波器：' + S.chain.describe().join(' → '), 'hl');
+    log('提示：点「开始采集」看实时波形；点「校准」训练分类器；点「注入眨眼 / 注入工频」观察去伪迹与滤波效果。', '');
+    rafId = requestAnimationFrame(loop);
+    NS.App.lastFeedback = null;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+})(window.EEG = window.EEG || {});
+
+</script>
+
+</body>
+</html>
